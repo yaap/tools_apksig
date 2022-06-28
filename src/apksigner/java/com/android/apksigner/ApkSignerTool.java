@@ -704,6 +704,9 @@ public class ApkSignerTool {
             for (ApkVerifier.IssueWithParams warning : sourceStampInfo.getWarnings()) {
                 warningsOut.println("WARNING: SourceStamp: " + warning);
             }
+            for (ApkVerifier.IssueWithParams infoMessage : sourceStampInfo.getInfoMessages()) {
+                System.out.println("INFO: SourceStamp: " + infoMessage);
+            }
         }
 
         if (!verified) {

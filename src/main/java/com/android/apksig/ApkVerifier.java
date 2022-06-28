@@ -1764,6 +1764,7 @@ public class ApkVerifier {
 
             private final List<IssueWithParams> mErrors;
             private final List<IssueWithParams> mWarnings;
+            private final List<IssueWithParams> mInfoMessages;
 
             private final SourceStampVerificationStatus mSourceStampVerificationStatus;
 
@@ -1776,6 +1777,8 @@ public class ApkVerifier {
                         result.getErrors());
                 mWarnings = ApkVerificationIssueAdapter.getIssuesFromVerificationIssues(
                         result.getWarnings());
+                mInfoMessages = ApkVerificationIssueAdapter.getIssuesFromVerificationIssues(
+                        result.getInfoMessages());
                 if (mErrors.isEmpty() && mWarnings.isEmpty()) {
                     mSourceStampVerificationStatus = SourceStampVerificationStatus.STAMP_VERIFIED;
                 } else {
@@ -1790,6 +1793,7 @@ public class ApkVerifier {
                 mCertificateLineage = Collections.emptyList();
                 mErrors = Collections.emptyList();
                 mWarnings = Collections.emptyList();
+                mInfoMessages = Collections.emptyList();
                 mSourceStampVerificationStatus = sourceStampVerificationStatus;
                 mTimestamp = 0;
             }
@@ -1816,12 +1820,28 @@ public class ApkVerifier {
                 return !mErrors.isEmpty();
             }
 
+            /**
+             * Returns {@code true} if any info messages were encountered during verification of
+             * this source stamp.
+             */
+            public boolean containsInfoMessages() {
+                return !mInfoMessages.isEmpty();
+            }
+
             public List<IssueWithParams> getErrors() {
                 return mErrors;
             }
 
             public List<IssueWithParams> getWarnings() {
                 return mWarnings;
+            }
+
+            /**
+             * Returns a {@code List} of {@link IssueWithParams} representing info messages
+             * that were encountered during verification of the source stamp.
+             */
+            public List<IssueWithParams> getInfoMessages() {
+                return mInfoMessages;
             }
 
             /**
