@@ -1976,11 +1976,12 @@ public class ApkSignerTest {
     }
 
     @Test
-    public void testSourceStampTimestamp_signWithSourceStamp_validTimestampValue()
+    public void
+    testSourceStampTimestamp_signWithSourceStampAndTimestampDefault_validTimestampValue()
             throws Exception {
         // Source stamps should include a timestamp attribute with the epoch time the stamp block
         // was signed. This test verifies a standard signing with a source stamp includes a valid
-        // value for the source stamp timestamp attribute.
+        // value for the source stamp timestamp attribute by default.
         ApkSigner.SignerConfig rsa2048SignerConfig = getDefaultSignerConfigFromResources(
                 FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
         List<ApkSigner.SignerConfig> ecP256SignerConfig = Collections.singletonList(
@@ -1998,6 +1999,61 @@ public class ApkSignerTest {
         assertSourceStampVerified(signedApk, result);
         long timestamp = result.getSourceStampInfo().getTimestampEpochSeconds();
         assertTrue("Invalid source stamp timestamp value: " + timestamp, timestamp > 0);
+    }
+
+    @Test
+    public void
+    testSourceStampTimestamp_signWithSourceStampAndTimestampEnabled_validTimestampValue()
+            throws Exception {
+        // Similar to above, this test verifies a valid timestamp value is written to the
+        // attribute when the caller explicitly requests to enable the source stamp timestamp.
+        ApkSigner.SignerConfig rsa2048SignerConfig = getDefaultSignerConfigFromResources(
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<ApkSigner.SignerConfig> ecP256SignerConfig = Collections.singletonList(
+                getDefaultSignerConfigFromResources(EC_P256_SIGNER_RESOURCE_NAME));
+
+        File signedApk = sign("original.apk",
+                new ApkSigner.Builder(ecP256SignerConfig)
+                        .setV1SigningEnabled(true)
+                        .setV2SigningEnabled(true)
+                        .setV3SigningEnabled(true)
+                        .setV4SigningEnabled(false)
+                        .setSourceStampSignerConfig(rsa2048SignerConfig)
+                        .setSourceStampTimestampEnabled(true));
+        ApkVerifier.Result result = verify(signedApk, null);
+
+        assertSourceStampVerified(signedApk, result);
+        long timestamp = result.getSourceStampInfo().getTimestampEpochSeconds();
+        assertTrue("Invalid source stamp timestamp value: " + timestamp, timestamp > 0);
+    }
+
+    @Test
+    public void
+    testSourceStampTimestamp_signWithSourceStampAndTimestampDisabled_defaultTimestampValue()
+            throws Exception {
+        // While source stamps should include a timestamp attribute indicating the time at which
+        // the stamp was signed, this can cause problems for reproducible builds. The
+        // ApkSigner.Builder#setSourceStampTimestampEnabled API allows the caller to specify
+        // whether the timestamp attribute should be written; this test verifies no timestamp is
+        // written to the source stamp if this API is used to disable the timestamp.
+        ApkSigner.SignerConfig rsa2048SignerConfig = getDefaultSignerConfigFromResources(
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<ApkSigner.SignerConfig> ecP256SignerConfig = Collections.singletonList(
+                getDefaultSignerConfigFromResources(EC_P256_SIGNER_RESOURCE_NAME));
+
+        File signedApk = sign("original.apk",
+                new ApkSigner.Builder(ecP256SignerConfig)
+                        .setV1SigningEnabled(true)
+                        .setV2SigningEnabled(true)
+                        .setV3SigningEnabled(true)
+                        .setV4SigningEnabled(false)
+                        .setSourceStampSignerConfig(rsa2048SignerConfig)
+                        .setSourceStampTimestampEnabled(false));
+        ApkVerifier.Result result = verify(signedApk, null);
+
+        assertSourceStampVerified(signedApk, result);
+        long timestamp = result.getSourceStampInfo().getTimestampEpochSeconds();
+        assertEquals(0, timestamp);
     }
 
     /**
