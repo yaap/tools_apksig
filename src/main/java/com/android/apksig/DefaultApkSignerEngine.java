@@ -106,6 +106,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
     private final List<SignerConfig> mSignerConfigs;
     private final SignerConfig mSourceStampSignerConfig;
     private final SigningCertificateLineage mSourceStampSigningCertificateLineage;
+    private final boolean mSourceStampTimestampEnabled;
     private final int mRotationMinSdkVersion;
     private final boolean mRotationTargetsDevRelease;
     private final int mMinSdkVersion;
@@ -189,6 +190,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
             List<SignerConfig> signerConfigs,
             SignerConfig sourceStampSignerConfig,
             SigningCertificateLineage sourceStampSigningCertificateLineage,
+            boolean sourceStampTimestampEnabled,
             int minSdkVersion,
             int rotationMinSdkVersion,
             boolean rotationTargetsDevRelease,
@@ -218,6 +220,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         mSignerConfigs = signerConfigs;
         mSourceStampSignerConfig = sourceStampSignerConfig;
         mSourceStampSigningCertificateLineage = sourceStampSigningCertificateLineage;
+        mSourceStampTimestampEnabled = sourceStampTimestampEnabled;
         mMinSdkVersion = minSdkVersion;
         mRotationMinSdkVersion = rotationMinSdkVersion;
         mRotationTargetsDevRelease = rotationTargetsDevRelease;
@@ -1136,9 +1139,12 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 signatureSchemeDigestInfos.put(
                         VERSION_JAR_SIGNATURE_SCHEME, v1SigningSchemeDigests);
             }
-            signingSchemeBlocks.add(
-                    V2SourceStampSigner.generateSourceStampBlock(
-                            sourceStampSignerConfig, signatureSchemeDigestInfos));
+            V2SourceStampSigner v2SourceStampSigner =
+                    new V2SourceStampSigner.Builder(sourceStampSignerConfig,
+                            signatureSchemeDigestInfos)
+                            .setSourceStampTimestampEnabled(mSourceStampTimestampEnabled)
+                            .build();
+            signingSchemeBlocks.add(v2SourceStampSigner.generateSourceStampBlock());
         }
 
         // create APK Signing Block with v2 and/or v3 and/or SourceStamp blocks
@@ -1720,6 +1726,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         private List<SignerConfig> mSignerConfigs;
         private SignerConfig mStampSignerConfig;
         private SigningCertificateLineage mSourceStampSigningCertificateLineage;
+        private boolean mSourceStampTimestampEnabled = true;
         private final int mMinSdkVersion;
 
         private boolean mV1SigningEnabled = true;
@@ -1814,6 +1821,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     mSignerConfigs,
                     mStampSignerConfig,
                     mSourceStampSigningCertificateLineage,
+                    mSourceStampTimestampEnabled,
                     mMinSdkVersion,
                     mRotationMinSdkVersion,
                     mRotationTargetsDevRelease,
@@ -1840,6 +1848,15 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         public Builder setSourceStampSigningCertificateLineage(
                 SigningCertificateLineage sourceStampSigningCertificateLineage) {
             mSourceStampSigningCertificateLineage = sourceStampSigningCertificateLineage;
+            return this;
+        }
+
+        /**
+         * Sets whether the source stamp should contain the timestamp attribute with the time
+         * at which the source stamp was signed.
+         */
+        public Builder setSourceStampTimestampEnabled(boolean value) {
+            mSourceStampTimestampEnabled = value;
             return this;
         }
 

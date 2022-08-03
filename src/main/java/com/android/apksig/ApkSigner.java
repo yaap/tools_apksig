@@ -93,6 +93,7 @@ public class ApkSigner {
     private final SignerConfig mSourceStampSignerConfig;
     private final SigningCertificateLineage mSourceStampSigningCertificateLineage;
     private final boolean mForceSourceStampOverwrite;
+    private final boolean mSourceStampTimestampEnabled;
     private final Integer mMinSdkVersion;
     private final int mRotationMinSdkVersion;
     private final boolean mRotationTargetsDevRelease;
@@ -125,6 +126,7 @@ public class ApkSigner {
             SignerConfig sourceStampSignerConfig,
             SigningCertificateLineage sourceStampSigningCertificateLineage,
             boolean forceSourceStampOverwrite,
+            boolean sourceStampTimestampEnabled,
             Integer minSdkVersion,
             int rotationMinSdkVersion,
             boolean rotationTargetsDevRelease,
@@ -151,6 +153,7 @@ public class ApkSigner {
         mSourceStampSignerConfig = sourceStampSignerConfig;
         mSourceStampSigningCertificateLineage = sourceStampSigningCertificateLineage;
         mForceSourceStampOverwrite = forceSourceStampOverwrite;
+        mSourceStampTimestampEnabled = sourceStampTimestampEnabled;
         mMinSdkVersion = minSdkVersion;
         mRotationMinSdkVersion = rotationMinSdkVersion;
         mRotationTargetsDevRelease = rotationTargetsDevRelease;
@@ -324,6 +327,7 @@ public class ApkSigner {
                                         mSourceStampSignerConfig.getCertificates(),
                                         mSourceStampSignerConfig.getDeterministicDsaSigning())
                                 .build());
+                signerEngineBuilder.setSourceStampTimestampEnabled(mSourceStampTimestampEnabled);
             }
             if (mSourceStampSigningCertificateLineage != null) {
                 signerEngineBuilder.setSourceStampSigningCertificateLineage(
@@ -1128,6 +1132,7 @@ public class ApkSigner {
         private SignerConfig mSourceStampSignerConfig;
         private SigningCertificateLineage mSourceStampSigningCertificateLineage;
         private boolean mForceSourceStampOverwrite = false;
+        private boolean mSourceStampTimestampEnabled = true;
         private boolean mV1SigningEnabled = true;
         private boolean mV2SigningEnabled = true;
         private boolean mV3SigningEnabled = true;
@@ -1225,6 +1230,15 @@ public class ApkSigner {
          */
         public Builder setForceSourceStampOverwrite(boolean force) {
             mForceSourceStampOverwrite = force;
+            return this;
+        }
+
+        /**
+         * Sets whether the source stamp should contain the timestamp attribute with the time
+         * at which the source stamp was signed.
+         */
+        public Builder setSourceStampTimestampEnabled(boolean value) {
+            mSourceStampTimestampEnabled = value;
             return this;
         }
 
@@ -1652,6 +1666,7 @@ public class ApkSigner {
                     mSourceStampSignerConfig,
                     mSourceStampSigningCertificateLineage,
                     mForceSourceStampOverwrite,
+                    mSourceStampTimestampEnabled,
                     mMinSdkVersion,
                     mRotationMinSdkVersion,
                     mRotationTargetsDevRelease,

@@ -146,6 +146,7 @@ public class ApkSignerTool {
         boolean v3SigningEnabled = true;
         boolean v4SigningEnabled = true;
         boolean forceSourceStampOverwrite = false;
+        boolean sourceStampTimestampEnabled = true;
         boolean alignFileSize = false;
         boolean verityEnabled = false;
         boolean debuggableApkPermitted = true;
@@ -199,6 +200,8 @@ public class ApkSignerTool {
                 v4SigningFlagFound = true;
             } else if ("force-stamp-overwrite".equals(optionName)) {
                 forceSourceStampOverwrite = optionsParser.getOptionalBooleanValue(true);
+            } else if ("stamp-timestamp-enabled".equals(optionName)) {
+                sourceStampTimestampEnabled = optionsParser.getOptionalBooleanValue(true);
             } else if ("align-file-size".equals(optionName)) {
                 alignFileSize = true;
             } else if ("verity-enabled".equals(optionName)) {
@@ -374,6 +377,7 @@ public class ApkSignerTool {
                         .setV3SigningEnabled(v3SigningEnabled)
                         .setV4SigningEnabled(v4SigningEnabled)
                         .setForceSourceStampOverwrite(forceSourceStampOverwrite)
+                        .setSourceStampTimestampEnabled(sourceStampTimestampEnabled)
                         .setAlignFileSize(alignFileSize)
                         .setVerityEnabled(verityEnabled)
                         .setV4ErrorReportingEnabled(v4SigningEnabled && v4SigningFlagFound)
