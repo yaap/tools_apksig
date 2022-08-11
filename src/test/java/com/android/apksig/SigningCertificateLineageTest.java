@@ -409,8 +409,23 @@ public class SigningCertificateLineageTest {
         SigningCertificateLineage lineageFromApk = SigningCertificateLineage.readFromApkDataSource(
                 apkDataSource);
         assertLineageContainsExpectedSigners(lineageFromApk, expectedSigners);
-
     }
+
+    @Test
+    public void testOnlyV31LineageFromAPKWithV31BlockContainsExpectedSigners() throws Exception {
+        SignerConfig firstSigner = getSignerConfigFromResources(
+            FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        SignerConfig secondSigner = getSignerConfigFromResources(
+            SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<SignerConfig> expectedSigners = Arrays.asList(firstSigner, secondSigner);
+        DataSource apkDataSource = Resources.toDataSource(getClass(),
+            "v31-rsa-2048_2-tgt-34-1-tgt-28.apk");
+        SigningCertificateLineage lineageFromApk =
+            SigningCertificateLineage.readV31FromApkDataSource(
+                apkDataSource);
+        assertLineageContainsExpectedSigners(lineageFromApk, expectedSigners);
+    }
+
 
     @Test(expected = ApkFormatException.class)
     public void testLineageFromAPKWithInvalidZipCDSizeFails() throws Exception {
@@ -455,6 +470,37 @@ public class SigningCertificateLineageTest {
                     + "block with a modified lineage attribute ID");
         } catch (IllegalArgumentException expected) {}
     }
+
+    @Test
+    public void testV31LineageFromAPKWithNoV31LineageFails() throws Exception {
+        DataSource apkDataSource = Resources.toDataSource(getClass(),
+            "golden-aligned-v1v2-out.apk");
+        try {
+            SigningCertificateLineage.readV31FromApkDataSource(apkDataSource);
+            fail("A failure should have been reported due to the APK not containing a V3 signing "
+                + "block");
+        } catch (IllegalArgumentException expected) {}
+
+        // This is a valid APK signed with the V1, V2, and V3 signature schemes, but there is no
+        // lineage in the V3 signature block.
+        apkDataSource = Resources.toDataSource(getClass(), "golden-aligned-v1v2v3-out.apk");
+        try {
+            SigningCertificateLineage.readV31FromApkDataSource(apkDataSource);
+            fail("A failure should have been reported due to the APK containing a V3 signing "
+                + "block without the lineage attribute");
+        } catch (IllegalArgumentException expected) {}
+
+        // This is a valid APK signed with the V1, V2, and V3 signature schemes, with a valid
+        // lineage in the V3 signature block, but no V3.1 lineage.
+        apkDataSource = Resources.toDataSource(getClass(),
+            "v1v2v3-with-rsa-2048-lineage-3-signers.apk");
+        try {
+            SigningCertificateLineage.readV31FromApkDataSource(apkDataSource);
+            fail("A failure should have been reported due to the APK containing a V3 signing "
+                + "block without the lineage attribute");
+        } catch (IllegalArgumentException expected) {}
+    }
+
 
     /**
      * Builds a new {@code SigningCertificateLinage.SignerCapabilities} object using the values in

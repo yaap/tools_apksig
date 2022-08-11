@@ -18,6 +18,7 @@ package com.android.apksig;
 
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.getLengthPrefixedSlice;
 
+import com.android.apksig.SourceStampVerifier.Result.SignerInfo;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkUtils;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
@@ -52,6 +53,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * APK Signer Lineage.
@@ -183,13 +185,35 @@ public class SigningCertificateLineage {
     }
 
     /**
-     * Extracts a Signing Certificate Lineage from the proof-of-rotation attribute in the V3
-     * signature block of the provided APK DataSource.
+     * Extracts a Signing Certificate Lineage from the proof-of-rotation attribute in the V3 and
+     * V3.1 signature blocks of the provided APK DataSource.
      *
-     * @throws IllegalArgumentException if the provided APK does not contain a V3 signature block,
-     * or if the V3 signature block does not contain a valid lineage.
+     * @throws IllegalArgumentException if the provided APK does not contain a V3 nor V3.1
+     * signature block, or if the V3 and V3.1 signature blocks do not contain a valid lineage.
      */
+
     public static SigningCertificateLineage readFromApkDataSource(DataSource apk)
+            throws IOException, ApkFormatException {
+        return readFromApkDataSource(apk, /* readV31Lineage= */ true,  /* readV3Lineage= */true);
+    }
+
+    /**
+     * Extracts a Signing Certificate Lineage from the proof-of-rotation attribute in the V3.1
+     * signature blocks of the provided APK DataSource.
+     *
+     * @throws IllegalArgumentException if the provided APK does not contain a V3.1 signature block,
+     * or if the V3.1 signature block does not contain a valid lineage.
+     */
+
+    public static SigningCertificateLineage readV31FromApkDataSource(DataSource apk)
+        throws IOException, ApkFormatException {
+        return readFromApkDataSource(apk, /* readV31Lineage= */ true, /* readV3Lineage= */ false);
+    }
+
+    private static SigningCertificateLineage readFromApkDataSource(
+        DataSource apk,
+        boolean readV31Lineage,
+        boolean readV3Lineage)
             throws IOException, ApkFormatException {
         ApkUtils.ZipSections zipSections;
         try {
@@ -199,29 +223,41 @@ public class SigningCertificateLineage {
         }
 
         List<SignatureInfo> signatureInfoList = new ArrayList<>();
-        try {
-            ApkSigningBlockUtils.Result result = new ApkSigningBlockUtils.Result(
+        if (readV31Lineage) {
+            try {
+                ApkSigningBlockUtils.Result result = new ApkSigningBlockUtils.Result(
                     ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31);
-            signatureInfoList.add(
+                signatureInfoList.add(
                     ApkSigningBlockUtils.findSignature(apk, zipSections,
-                            V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID, result));
+                        V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID, result));
+            } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
+                // This could be expected if there's only a V3 signature block.
+            }
         }
-        catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
-            // This could be expected if there's only a V3 signature block.
-        }
-        try {
-            ApkSigningBlockUtils.Result result = new ApkSigningBlockUtils.Result(
+        if (readV3Lineage) {
+            try {
+                ApkSigningBlockUtils.Result result = new ApkSigningBlockUtils.Result(
                     ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3);
-            signatureInfoList.add(
+                signatureInfoList.add(
                     ApkSigningBlockUtils.findSignature(apk, zipSections,
-                            V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID, result));
-        }
-        catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
-            // This could be expected if the provided APK is not signed with the v3 signature scheme
+                        V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID, result));
+            } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
+                // This could be expected if the provided APK is not signed with the V3 signature
+                // scheme
+            }
         }
         if (signatureInfoList.isEmpty()) {
-            throw new IllegalArgumentException(
-                    "The provided APK does not contain a valid V3 signature block.");
+            String message;
+            if (readV31Lineage && readV3Lineage) {
+                message = "The provided APK does not contain a valid V3 nor V3.1 signature block.";
+            } else if (readV31Lineage) {
+                message = "The provided APK does not contain a valid V3.1 signature block.";
+            } else if (readV3Lineage) {
+                message = "The provided APK does not contain a valid V3 signature block.";
+            } else {
+                message = "No signature blocks were requested.";
+            }
+            throw new IllegalArgumentException(message);
         }
 
         List<SigningCertificateLineage> lineages = new ArrayList<>(1);
