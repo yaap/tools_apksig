@@ -322,7 +322,7 @@ public class ApkVerifierTest {
 
         SigningCertificateLineageTest.assertLineageContainsExpectedSigners(
                 ApkVerifier.getLineageFromResult(
-                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3),
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31),
                 FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
     }
 
@@ -380,7 +380,6 @@ public class ApkVerifierTest {
                 apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
 
         assertTrue(result.getV31SchemeSigners().isEmpty());
-
     }
 
     @Test

@@ -214,14 +214,15 @@ public class SigningCertificateLineage {
      */
 
     public static SigningCertificateLineage readV31FromApkDataSource(DataSource apk)
-        throws IOException, ApkFormatException {
-        return readFromApkDataSource(apk, /* readV31Lineage= */ true, /* readV3Lineage= */ false);
+            throws IOException, ApkFormatException {
+            return readFromApkDataSource(apk, /* readV31Lineage= */ true,
+                        /* readV3Lineage= */ false);
     }
 
     private static SigningCertificateLineage readFromApkDataSource(
-        DataSource apk,
-        boolean readV31Lineage,
-        boolean readV3Lineage)
+            DataSource apk,
+            boolean readV31Lineage,
+            boolean readV3Lineage)
             throws IOException, ApkFormatException {
         ApkUtils.ZipSections zipSections;
         try {
@@ -777,6 +778,80 @@ public class SigningCertificateLineage {
 
         // if we've made it this far, they all check out, so just return the largest
         return lineages.get(largestIndex);
+    }
+
+    /**
+     * Checks whether given lineages are compatible. Returns {@code true} if an installed APK with
+     * the oldLineage could be updated with an APK with the newLineage.
+     */
+    public static boolean checkLineagesCompatibility(
+        SigningCertificateLineage oldLineage, SigningCertificateLineage newLineage) {
+
+        final ArrayList<X509Certificate> oldCertificates = oldLineage == null ?
+                new ArrayList<X509Certificate>()
+                : new ArrayList(oldLineage.getCertificatesInLineage());
+        final ArrayList<X509Certificate> newCertificates = newLineage == null ?
+                new ArrayList<X509Certificate>()
+                : new ArrayList(newLineage.getCertificatesInLineage());
+
+        if (oldCertificates.isEmpty()) {
+            return true;
+        }
+        if (newCertificates.isEmpty()) {
+            return false;
+        }
+
+        // Both lineages contain exactly the same certificates or the new lineage extends
+        // the old one. The capabilities of particular certificates may have changed though but it
+        // does not matter in terms of current compatibility.
+        if (newCertificates.size() >= oldCertificates.size()
+                && newCertificates.subList(0, oldCertificates.size()).equals(oldCertificates)) {
+            return true;
+        }
+
+        ArrayList<X509Certificate> newCertificatesArray = new ArrayList(newCertificates);
+        ArrayList<X509Certificate> oldCertificatesArray = new ArrayList(oldCertificates);
+
+        int lastOldCertIndexInNew = newCertificatesArray.lastIndexOf(
+                    oldCertificatesArray.get(oldCertificatesArray.size()-1));
+
+        // The new lineage trims some nodes from the beginning of the old lineage and possibly
+        // extends it at the end. The new lineage must contain the old signing certificate and
+        // the nodes up until the node with signing certificate must be in the same order.
+        // Good example 1:
+        //    old: A -> B -> C
+        //    new: B -> C -> D
+        // Good example 2:
+        //    old: A -> B -> C
+        //    new: C
+        // Bad example 1:
+        //    old: A -> B -> C
+        //    new: A -> C
+        // Bad example 1:
+        //    old: A -> B
+        //    new: C -> B
+        if (lastOldCertIndexInNew >= 0) {
+            return newCertificatesArray.subList(0, lastOldCertIndexInNew+1).equals(
+                    oldCertificatesArray.subList(
+                            oldCertificates.size()-1-lastOldCertIndexInNew,
+                            oldCertificatesArray.size()));
+        }
+
+
+        // The new lineage can be shorter than the old one only if the last certificate of the new
+        // lineage exists in the old lineage and has a rollback capability there.
+        // Good example:
+        //    old: A -> B_withRollbackCapability -> C
+        //    new: A -> B
+        // Bad example 1:
+        //    old: A -> B -> C
+        //    new: A -> B
+        // Bad example 2:
+        //    old: A -> B_withRollbackCapability -> C
+        //    new: A -> B -> D
+        return  oldCertificates.subList(0, newCertificates.size()).equals(newCertificates)
+                && oldLineage.getSignerCapabilities(
+                        oldCertificates.get(newCertificates.size()-1)).hasRollback();
     }
 
     /**
