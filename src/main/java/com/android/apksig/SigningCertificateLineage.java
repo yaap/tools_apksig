@@ -114,6 +114,16 @@ public class SigningCertificateLineage {
         mSigningLineage = list;
     }
 
+    /**
+     * Creates a {@code SigningCertificateLineage} with a single signer in the lineage.
+     */
+    private static SigningCertificateLineage createSigningLineage(int minSdkVersion,
+            SignerConfig signer, SignerCapabilities capabilities) {
+        SigningCertificateLineage signingCertificateLineage = new SigningCertificateLineage(
+                minSdkVersion, new ArrayList<>());
+        return signingCertificateLineage.spawnFirstDescendant(signer, capabilities);
+    }
+
     private static SigningCertificateLineage createSigningLineage(
             int minSdkVersion, SignerConfig parent, SignerCapabilities parentCapabilities,
             SignerConfig child, SignerCapabilities childCapabilities)
@@ -1076,6 +1086,21 @@ public class SigningCertificateLineage {
         }
 
         /**
+         * Constructs a new {@code Builder} that is intended to create a {@code
+         * SigningCertificateLineage} with a single signer in the signing history.
+         *
+         * @param originalSignerConfig first signer in this lineage
+         */
+        public Builder(SignerConfig originalSignerConfig) {
+            if (originalSignerConfig == null) {
+                throw new NullPointerException("Can't pass null SignerConfigs when constructing a "
+                        + "new SigningCertificateLineage");
+            }
+            mOriginalSignerConfig = originalSignerConfig;
+            mNewSignerConfig = null;
+        }
+
+        /**
          * Sets the minimum Android platform version (API Level) on which this lineage is expected
          * to validate.  It is possible that newer signers in the lineage may not be recognized on
          * the given platform, but as long as an older signer is, the lineage can still be used to
@@ -1128,6 +1153,11 @@ public class SigningCertificateLineage {
 
             if (mOriginalCapabilities == null) {
                 mOriginalCapabilities = new SignerCapabilities.Builder().build();
+            }
+
+            if (mNewSignerConfig == null) {
+                return createSigningLineage(mMinSdkVersion, mOriginalSignerConfig,
+                        mOriginalCapabilities);
             }
 
             if (mNewCapabilities == null) {

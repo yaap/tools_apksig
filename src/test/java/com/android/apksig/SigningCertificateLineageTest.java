@@ -70,6 +70,17 @@ public class SigningCertificateLineageTest {
     }
 
     @Test
+    public void testLineageWithSingleSignerContainsExpectedSigner() throws Exception {
+        SignerConfig signerConfig = Resources.toLineageSignerConfig(getClass(),
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+
+        SigningCertificateLineage lineage = new SigningCertificateLineage.Builder(
+                signerConfig).build();
+
+        assertLineageContainsExpectedSigners(lineage, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+    }
+
+    @Test
     public void testFirstRotationContainsExpectedSigners() throws Exception {
         SigningCertificateLineage lineage = createLineageWithSignersFromResources(
                 FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
