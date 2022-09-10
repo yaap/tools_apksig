@@ -611,7 +611,7 @@ public class SigningCertificateLineageTest {
      * Asserts the provided {@code lineage} contains the {@code expectedSigners} from the test's
      * resources.
      */
-    static void assertLineageContainsExpectedSigners(SigningCertificateLineage lineage,
+    protected static void assertLineageContainsExpectedSigners(SigningCertificateLineage lineage,
             String... expectedSigners) throws Exception {
         List<SignerConfig> signers = new ArrayList<>();
         for (String expectedSigner : expectedSigners) {
@@ -621,7 +621,7 @@ public class SigningCertificateLineageTest {
     }
 
     private static void assertLineageContainsExpectedSigners(SigningCertificateLineage lineage,
-            List<SignerConfig> signers) {
+        List<SignerConfig> signers) {
         assertEquals("The lineage does not contain the expected number of signers",
                 signers.size(), lineage.size());
         for (SignerConfig signer : signers) {

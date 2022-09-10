@@ -20,6 +20,9 @@ import static com.android.apksig.ApkSignerTest.FIRST_RSA_2048_SIGNER_RESOURCE_NA
 import static com.android.apksig.ApkSignerTest.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.ApkSignerTest.assertResultContainsSigners;
 import static com.android.apksig.ApkSignerTest.assertV31SignerTargetsMinApiLevel;
+import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V2;
+import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V3;
+import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
@@ -28,15 +31,22 @@ import static org.junit.Assume.assumeNoException;
 
 import com.android.apksig.ApkVerifier.Issue;
 import com.android.apksig.ApkVerifier.IssueWithParams;
+import com.android.apksig.ApkVerifier.Result;
 import com.android.apksig.ApkVerifier.Result.SourceStampInfo.SourceStampVerificationStatus;
 import com.android.apksig.apk.ApkFormatException;
+import com.android.apksig.apk.ApkUtils;
+import com.android.apksig.internal.apk.ApkSigningBlockUtils;
+import com.android.apksig.internal.apk.ContentDigestAlgorithm;
 import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.HexEncoding;
 import com.android.apksig.internal.util.Resources;
+import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 
 import java.security.Provider;
+import java.util.Arrays;
+import java.util.Map;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -77,6 +87,10 @@ public class ApkVerifierTest {
             "fb5dbd3c669af9fc236c6991e6387b7f11ff0590997f22d0f5c74ff40e04fca8";
     private static final String EC_P256_CERT_SHA256_DIGEST =
             "6a8b96e278e58f62cfe3584022cec1d0527fcb85a9e5d2e1694eb0405be5b599";
+    private static final String RSA_2048_CHUNKED_SHA256_DIGEST =
+            "0a457e6dd7cc8d4dde28a4dae843032de5fbe58123eedd0a31e7f958f23e1626";
+    private static final String RSA_2048_CHUNKED_SHA256_DIGEST_FROM_INCORRECTLY_SIGNED_APK =
+            "0a457e6dd7cc8d4dde28a4dae843032de5fbe58101eedd0a31e7f958f23e1626";
 
     @Test
     public void testOriginalAccepted() throws Exception {
@@ -287,6 +301,202 @@ public class ApkVerifierTest {
         assertVerified(
                 verifyForMaxSdkVersion(
                         "v1v2v3-with-rsa-2048-lineage-3-signers.apk", AndroidSdkVersion.M));
+    }
+
+    @Test
+    public void testGetResultLineage() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-tgt-33-no-v3-attr.apk")));
+        int sdkVersion = AndroidSdkVersion.O;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(ApkVerifier.getLineageFromResult(
+                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31).size() == 2);
+        assertEquals(ApkVerifier.getLineageFromResult(
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
+                        .getCertificatesInLineage().get(1),
+                result.getV31SchemeSigners().get(0).getCertificate());
+
+        SigningCertificateLineageTest.assertLineageContainsExpectedSigners(
+                ApkVerifier.getLineageFromResult(
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3),
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+    }
+
+    @Test
+    public void testGetResultV3Lineage() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+            "v3-rsa-2048_2-tgt-dev-release.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
+
+        assertTrue(ApkVerifier.getLineageFromResult(
+            result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3).size() == 2);
+        assertEquals(ApkVerifier.getLineageFromResult(
+                            result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
+                    .getCertificatesInLineage().get(1),
+                result.getV3SchemeSigners().get(0).getCertificate());
+
+        SigningCertificateLineageTest.assertLineageContainsExpectedSigners(
+                ApkVerifier.getLineageFromResult(
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3),
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+    }
+
+    @Test
+    public void testGetResultNoLineageApk() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-empty-lineage-no-v3.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(result != null);
+        assertTrue(!ApkVerifier.containsLineageErrors(result));
+        assertTrue(ApkVerifier.getLineageFromResult(
+                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31) != null);
+        assertEquals(ApkVerifier.getLineageFromResult(
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
+                        .getCertificatesInLineage().get(0),
+                result.getV31SchemeSigners().get(0).getCertificate());
+    }
+
+    @Test
+    public void testGetResultNoV31Apk() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v3-rsa-2048_2-tgt-dev-release.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(result.getV31SchemeSigners().isEmpty());
+
+    }
+
+    @Test
+    public void testGetResultFromV3BlockFromV31SignedApk() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-rsa-2048_2-tgt-33-1-tgt-28.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result =
+            ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
+
+        assertTrue(!result.getV3SchemeSigners().isEmpty());
+        assertTrue(ApkVerifier.getLineageFromResult(
+                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
+                .getCertificatesInLineage()
+                .equals(Arrays.asList(result.getV3SchemeSigners().get(0).getCertificate())));
+    }
+
+    @Test
+    public void testGetResultContainsLineageErrors() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-2elem-incorrect-lineage.apk")));
+        int sdkVersion = AndroidSdkVersion.P;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(result != null);
+        assertTrue(ApkVerifier.containsLineageErrors(result));
+        assertTrue(ApkVerifier.getLineageFromResult(
+                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31) == null);
+    }
+
+    @Test
+    public void testGetResultDigests() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-empty-lineage-no-v3.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        Map<ContentDigestAlgorithm, byte[]> digests =
+                ApkVerifier.getContentDigestsFromResult(
+                        result, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(digests.size() == 1);
+        assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
+        assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
+                ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+    }
+
+    @Test
+    public void testGetV3ResultDigests() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-rsa-2048_2-tgt-33-1-tgt-28.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
+
+        Map<ContentDigestAlgorithm, byte[]> digests =
+            ApkVerifier.getContentDigestsFromResult(
+                result, VERSION_APK_SIGNATURE_SCHEME_V3);
+
+        assertTrue(digests.size() == 1);
+        assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
+        assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
+            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+    }
+
+    @Test
+    public void testGetV2ResultDigests() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-rsa-2048_2-tgt-33-1-tgt-28.apk")));
+        int sdkVersion = AndroidSdkVersion.N;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result =ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V2);
+
+        Map<ContentDigestAlgorithm, byte[]> digests =
+            ApkVerifier.getContentDigestsFromResult(
+                result, VERSION_APK_SIGNATURE_SCHEME_V2);
+
+        assertTrue(digests.size() == 1);
+        assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
+        assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
+            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+    }
+
+    @Test
+    public void testGetResultIncorrectDigests() throws  Exception {
+        DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
+                "v31-2elem-lineage-incorrect-digest.apk")));
+        int sdkVersion = AndroidSdkVersion.S;
+        ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
+
+        Result result = ApkVerifier.getSigningBlockResult(
+                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        Map<ContentDigestAlgorithm, byte[]> digests =
+            ApkVerifier.getContentDigestsFromResult(
+                result, VERSION_APK_SIGNATURE_SCHEME_V31);
+
+        assertTrue(digests.size() == 1);
+        assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
+        assertTrue(!RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
+            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+        assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST_FROM_INCORRECTLY_SIGNED_APK.equalsIgnoreCase(
+            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
     }
 
     @Test

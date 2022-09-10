@@ -18,7 +18,6 @@ package com.android.apksig;
 
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.getLengthPrefixedSlice;
 
-import com.android.apksig.SourceStampVerifier.Result.SignerInfo;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkUtils;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
@@ -53,7 +52,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * APK Signer Lineage.
