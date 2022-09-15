@@ -643,11 +643,23 @@ public class SigningCertificateLineage {
         if (config == null) {
             throw new NullPointerException("config == null");
         }
+        updateSignerCapabilities(config.getCertificate(), capabilities);
+    }
 
-        X509Certificate cert = config.getCertificate();
+    /**
+     * Updates the {@code capabilities} for the signer with the provided {@code certificate} in the
+     * lineage. Only those capabilities that have been modified through the setXX methods will be
+     * updated for the signer to prevent unset default values from being applied.
+     */
+    public void updateSignerCapabilities(X509Certificate certificate,
+            SignerCapabilities capabilities) {
+        if (certificate == null) {
+            throw new NullPointerException("config == null");
+        }
+
         for (int i = 0; i < mSigningLineage.size(); i++) {
             SigningCertificateNode lineageNode = mSigningLineage.get(i);
-            if (lineageNode.signingCert.equals(cert)) {
+            if (lineageNode.signingCert.equals(certificate)) {
                 int flags = lineageNode.flags;
                 SignerCapabilities newCapabilities = new SignerCapabilities.Builder(
                         flags).setCallerConfiguredCapabilities(capabilities).build();
@@ -657,7 +669,7 @@ public class SigningCertificateLineage {
         }
 
         // the provided signer config was not found in the lineage
-        throw new IllegalArgumentException("Certificate (" + cert.getSubjectDN()
+        throw new IllegalArgumentException("Certificate (" + certificate.getSubjectDN()
                 + ") not found in the SigningCertificateLineage");
     }
 
