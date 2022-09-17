@@ -18,6 +18,7 @@ package com.android.apksig;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -226,6 +227,34 @@ public class SigningCertificateLineageTest {
         lineage.updateSignerCapabilities(oldSignerConfig, newCapabilities);
         SignerCapabilities updatedCapabilities = lineage.getSignerCapabilities(oldSignerConfig);
         assertExpectedCapabilityValues(updatedCapabilities, expectedCapabilityValues);
+    }
+
+    @Test
+    public void testUpdatedCapabilitiesInLineageByCertificate() throws Exception {
+        SigningCertificateLineage lineage = createLineageWithSignersFromResources(
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+        X509Certificate oldSignerCertificate = mSigners.get(0).getCertificate();
+        List<Boolean> expectedCapabilityValues = Arrays.asList(false, false, false, false, false);
+        SignerCapabilities newCapabilities = buildSignerCapabilities(expectedCapabilityValues);
+
+        lineage.updateSignerCapabilities(oldSignerCertificate, newCapabilities);
+
+        assertExpectedCapabilityValues(lineage.getSignerCapabilities(oldSignerCertificate),
+                expectedCapabilityValues);
+    }
+
+    @Test
+    public void testUpdateSignerCapabilitiesCertificateNotInLineageThrowsException()
+            throws Exception {
+        SigningCertificateLineage lineage = createLineageWithSignersFromResources(
+                FIRST_RSA_2048_SIGNER_RESOURCE_NAME, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+        X509Certificate certificate = getSignerConfigFromResources(
+                FIRST_RSA_1024_SIGNER_RESOURCE_NAME).getCertificate();
+        List<Boolean> expectedCapabilityValues = Arrays.asList(false, false, false, false, false);
+        SignerCapabilities newCapabilities = buildSignerCapabilities(expectedCapabilityValues);
+
+        assertThrows(IllegalArgumentException.class, () ->
+                lineage.updateSignerCapabilities(certificate, newCapabilities));
     }
 
     @Test

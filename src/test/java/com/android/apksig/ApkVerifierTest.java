@@ -44,8 +44,10 @@ import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 
+import java.nio.charset.StandardCharsets;
 import java.security.Provider;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.Map;
 import org.junit.Assume;
 import org.junit.Test;
@@ -316,7 +318,7 @@ public class ApkVerifierTest {
         assertTrue(ApkVerifier.getLineageFromResult(
                 result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31).size() == 2);
         assertEquals(ApkVerifier.getLineageFromResult(
-                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
+                                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
                         .getCertificatesInLineage().get(1),
                 result.getV31SchemeSigners().get(0).getCertificate());
 
@@ -329,7 +331,7 @@ public class ApkVerifierTest {
     @Test
     public void testGetResultV3Lineage() throws  Exception {
         DataSource apk = DataSources.asDataSource(ByteBuffer.wrap(Resources.toByteArray(getClass(),
-            "v3-rsa-2048_2-tgt-dev-release.apk")));
+                "v3-rsa-2048_2-tgt-dev-release.apk")));
         int sdkVersion = AndroidSdkVersion.N;
         ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
 
@@ -337,10 +339,10 @@ public class ApkVerifierTest {
                 apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
 
         assertTrue(ApkVerifier.getLineageFromResult(
-            result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3).size() == 2);
+                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3).size() == 2);
         assertEquals(ApkVerifier.getLineageFromResult(
-                            result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
-                    .getCertificatesInLineage().get(1),
+                                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
+                        .getCertificatesInLineage().get(1),
                 result.getV3SchemeSigners().get(0).getCertificate());
 
         SigningCertificateLineageTest.assertLineageContainsExpectedSigners(
@@ -364,7 +366,7 @@ public class ApkVerifierTest {
         assertTrue(ApkVerifier.getLineageFromResult(
                 result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31) != null);
         assertEquals(ApkVerifier.getLineageFromResult(
-                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
+                                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31)
                         .getCertificatesInLineage().get(0),
                 result.getV31SchemeSigners().get(0).getCertificate());
     }
@@ -390,12 +392,12 @@ public class ApkVerifierTest {
         ApkUtils.ZipSections zipSections = ApkUtils.findZipSections(apk);
 
         Result result =
-            ApkVerifier.getSigningBlockResult(
-                apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
+                ApkVerifier.getSigningBlockResult(
+                        apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
 
         assertTrue(!result.getV3SchemeSigners().isEmpty());
         assertTrue(ApkVerifier.getLineageFromResult(
-                result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
+                        result, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3)
                 .getCertificatesInLineage()
                 .equals(Arrays.asList(result.getV3SchemeSigners().get(0).getCertificate())));
     }
@@ -447,13 +449,13 @@ public class ApkVerifierTest {
                 apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V3);
 
         Map<ContentDigestAlgorithm, byte[]> digests =
-            ApkVerifier.getContentDigestsFromResult(
-                result, VERSION_APK_SIGNATURE_SCHEME_V3);
+                ApkVerifier.getContentDigestsFromResult(
+                        result, VERSION_APK_SIGNATURE_SCHEME_V3);
 
         assertTrue(digests.size() == 1);
         assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
         assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
-            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+                ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
     }
 
     @Test
@@ -467,13 +469,13 @@ public class ApkVerifierTest {
                 apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V2);
 
         Map<ContentDigestAlgorithm, byte[]> digests =
-            ApkVerifier.getContentDigestsFromResult(
-                result, VERSION_APK_SIGNATURE_SCHEME_V2);
+                ApkVerifier.getContentDigestsFromResult(
+                        result, VERSION_APK_SIGNATURE_SCHEME_V2);
 
         assertTrue(digests.size() == 1);
         assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
         assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
-            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+                ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
     }
 
     @Test
@@ -487,15 +489,15 @@ public class ApkVerifierTest {
                 apk, zipSections, sdkVersion, VERSION_APK_SIGNATURE_SCHEME_V31);
 
         Map<ContentDigestAlgorithm, byte[]> digests =
-            ApkVerifier.getContentDigestsFromResult(
-                result, VERSION_APK_SIGNATURE_SCHEME_V31);
+                ApkVerifier.getContentDigestsFromResult(
+                        result, VERSION_APK_SIGNATURE_SCHEME_V31);
 
         assertTrue(digests.size() == 1);
         assertTrue(digests.containsKey(ContentDigestAlgorithm.CHUNKED_SHA256));
         assertTrue(!RSA_2048_CHUNKED_SHA256_DIGEST.equalsIgnoreCase(
-            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+                ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
         assertTrue(RSA_2048_CHUNKED_SHA256_DIGEST_FROM_INCORRECTLY_SIGNED_APK.equalsIgnoreCase(
-            ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
+                ApkSigningBlockUtils.toHex(digests.get(ContentDigestAlgorithm.CHUNKED_SHA256))));
     }
 
     @Test
@@ -1689,7 +1691,7 @@ public class ApkVerifierTest {
 
         assertVerified(result);
         assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
-            SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+                SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
         assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME, 34);
     }
 
@@ -1715,7 +1717,7 @@ public class ApkVerifierTest {
         // SDK versions that do not support v3.1 should ignore the stripping protection attribute
         // and the v3.1 signing block.
         result = verifyForMaxSdkVersion("v31-tgt-34-v3-attr-value-33.apk",
-            V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT - 1);
+                V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT - 1);
         assertVerified(result);
     }
 
@@ -1729,7 +1731,7 @@ public class ApkVerifierTest {
         // SDK versions that do not support v3.1 should ignore the stripping protection attribute
         // and the v3.1 signing block.
         result = verifyForMaxSdkVersion("v31-block-stripped-v3-attr-value-33.apk",
-            V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT - 1);
+                V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT - 1);
         assertVerified(result);
     }
 
@@ -1803,6 +1805,89 @@ public class ApkVerifierTest {
 
         assertVerified(result);
         assertTrue(result.isVerifiedUsingV31Scheme());
+    }
+
+    @Test
+    public void compareMatchingDigests() throws Exception {
+        Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
+        firstDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        firstDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        Map<ContentDigestAlgorithm, byte[]> secondDigest = new HashMap<>();
+        secondDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        secondDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(ApkVerifier.compareDigests(firstDigest, secondDigest));
+    }
+
+    @Test
+    public void compareMatchingIntersectionDigests() throws Exception {
+        Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
+        firstDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        firstDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        Map<ContentDigestAlgorithm, byte[]> secondDigest = new HashMap<>();
+        secondDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        secondDigest.put(ContentDigestAlgorithm.VERITY_CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST_FROM_INCORRECTLY_SIGNED_APK
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(ApkVerifier.compareDigests(firstDigest, secondDigest));
+    }
+
+    @Test
+    public void compareNoIntersectionDigests() throws Exception {
+        Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
+        firstDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        Map<ContentDigestAlgorithm, byte[]> secondDigest = new HashMap<>();
+        secondDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(!ApkVerifier.compareDigests(firstDigest, secondDigest));
+    }
+
+    @Test
+    public void compareNotMatchingDigests() throws Exception {
+        Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
+        firstDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        firstDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        Map<ContentDigestAlgorithm, byte[]> secondDigest = new HashMap<>();
+        secondDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        secondDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(!ApkVerifier.compareDigests(firstDigest, secondDigest));
+    }
+
+    @Test
+    public void comparePartiallyNotMatchingDigests() throws Exception {
+        Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
+        firstDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        firstDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CERT_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+
+        Map<ContentDigestAlgorithm, byte[]> secondDigest = new HashMap<>();
+        secondDigest.put(ContentDigestAlgorithm.SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST.getBytes(StandardCharsets.UTF_8));
+        secondDigest.put(ContentDigestAlgorithm.CHUNKED_SHA256,
+                RSA_2048_CHUNKED_SHA256_DIGEST_FROM_INCORRECTLY_SIGNED_APK
+                        .getBytes(StandardCharsets.UTF_8));
+
+        assertTrue(!ApkVerifier.compareDigests(firstDigest, secondDigest));
     }
 
     private ApkVerifier.Result verify(String apkFilenameInResources)
@@ -1956,7 +2041,7 @@ public class ApkVerifierTest {
      * error, otherwise it will be expected as a warning.
      */
     private static void assertVerificationIssue(ApkVerifier.Result result, Issue expectedIssue,
-        boolean verifyError) {
+            boolean verifyError) {
         if (result.isVerified() && verifyError) {
             fail("APK verification succeeded instead of failing with " + expectedIssue);
             return;
@@ -2025,7 +2110,7 @@ public class ApkVerifierTest {
         for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
-                : signer.getWarnings())) {
+                    : signer.getWarnings())) {
                 if (expectedIssue.equals(issue.getIssue())) {
                     return;
                 }
@@ -2033,9 +2118,9 @@ public class ApkVerifierTest {
                     msg.append('\n');
                 }
                 msg.append("APK Signature Scheme v3.1 signer ")
-                    .append(signerName)
-                    .append(": ")
-                    .append(issue);
+                        .append(signerName)
+                        .append(": ")
+                        .append(issue);
             }
         }
 

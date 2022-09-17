@@ -23,6 +23,7 @@ import static com.android.apksig.apk.ApkUtils.getTargetSdkVersionFromBinaryAndro
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31;
+import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_JAR_SIGNATURE_SCHEME;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_SOURCE_STAMP;
@@ -718,6 +719,31 @@ public class ApkVerifier {
             }
         }
     }
+
+    /**
+     * Compares the digests coming from signature blocks. Returns {@code true} if at least one
+     * digest algorithm is present in both digests and actual digests for all common algorithms
+     * are the same.
+     */
+    public static boolean compareDigests(
+            Map<ContentDigestAlgorithm, byte[]> firstDigests,
+            Map<ContentDigestAlgorithm, byte[]> secondDigests) throws NoSuchAlgorithmException {
+
+        Set<ContentDigestAlgorithm> intersectKeys = new HashSet<>(firstDigests.keySet());
+        intersectKeys.retainAll(secondDigests.keySet());
+        if (intersectKeys.isEmpty()) {
+            return false;
+        }
+
+        for (ContentDigestAlgorithm algorithm : intersectKeys) {
+            if (!Arrays.equals(firstDigests.get(algorithm),
+                    secondDigests.get(algorithm))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
 
     /**
      * Verifies the provided {@code apk}'s source stamp signature, including verification of the
