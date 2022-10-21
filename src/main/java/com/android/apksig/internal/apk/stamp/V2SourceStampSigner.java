@@ -116,7 +116,7 @@ public class V2SourceStampSigner {
         sourceStampBlock.signedDigests = signatureSchemeDigests;
 
         sourceStampBlock.stampAttributes = encodeStampAttributes(
-                generateStampAttributes(mSourceStampSignerConfig.mSigningCertificateLineage));
+                generateStampAttributes(mSourceStampSignerConfig.signingCertificateLineage));
         sourceStampBlock.signedStampAttributes =
                 ApkSigningBlockUtils.generateSignaturesOverData(mSourceStampSignerConfig,
                         sourceStampBlock.stampAttributes);

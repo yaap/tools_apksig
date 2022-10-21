@@ -1686,13 +1686,14 @@ public class ApkVerifierTest {
     public void verifyV31_rotationTarget34_containsExpectedSigners() throws Exception {
         // This test verifies an APK targeting a specific SDK version for rotation properly reports
         // that version for the rotated signer in the v3.1 block, and all other signing blocks
-        // use the original signing key.
-        ApkVerifier.Result result = verify("v31-rsa-2048_2-tgt-34-1-tgt-28.apk");
+        // use the original signing key. The target is set to 10000 to prevent test failures when
+        // SDK version 34 is set as the development release.
+        ApkVerifier.Result result = verify("v31-rsa-2048_2-tgt-10000-1-tgt-28.apk");
 
         assertVerified(result);
         assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
                 SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
-        assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME, 34);
+        assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME, 10000);
     }
 
     @Test
@@ -1751,10 +1752,14 @@ public class ApkVerifierTest {
         // on a device running X with the system property ro.build.version.codename set to a new
         // development codename (eg T); a release platform will have this set to "REL", and the
         // platform will ignore the v3.1 signer if the minSdkVersion is X and the codename is "REL".
-        ApkVerifier.Result result = verify("v31-rsa-2048_2-tgt-34-dev-release.apk");
+        // The target is set to 10000 to prevent test failures when SDK version 34 is set as the
+        // development release.
+        ApkVerifier.Result result = verify("v31-rsa-2048_2-tgt-10000-dev-release.apk");
 
         assertVerified(result);
-        assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME, 34);
+        assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME, 10000);
+        assertEquals(1, result.getV31SchemeSigners().size());
+        assertTrue(result.getV31SchemeSigners().get(0).getRotationTargetsDevRelease());
         assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
                 SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
     }
@@ -2013,6 +2018,20 @@ public class ApkVerifierTest {
                         .append(issue);
             }
         }
+        for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
+            String signerName = "signer #" + (signer.getIndex() + 1);
+            for (IssueWithParams issue : signer.getErrors()) {
+                if (msg.length() > 0) {
+                    msg.append('\n');
+                }
+                msg.append("APK Signature Scheme v3.1 signer ")
+                        .append(signerName)
+                        .append(": ")
+                        .append(issue.getIssue())
+                        .append(": ")
+                        .append(issue);
+            }
+        }
 
         fail(apkId + " did not verify: " + msg);
     }
@@ -2049,7 +2068,7 @@ public class ApkVerifierTest {
 
         StringBuilder msg = new StringBuilder();
         for (IssueWithParams issue : (verifyError ? result.getErrors() : result.getWarnings())) {
-            if (expectedIssue.equals(issue.getIssue())) {
+            if (issue.getIssue().equals(expectedIssue)) {
                 return;
             }
             if (msg.length() > 0) {
@@ -2061,7 +2080,7 @@ public class ApkVerifierTest {
             String signerName = signer.getName();
             for (ApkVerifier.IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (expectedIssue.equals(issue.getIssue())) {
+                if (issue.getIssue().equals(expectedIssue)) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2079,7 +2098,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (expectedIssue.equals(issue.getIssue())) {
+                if (issue.getIssue().equals(expectedIssue)) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2095,7 +2114,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (expectedIssue.equals(issue.getIssue())) {
+                if (issue.getIssue().equals(expectedIssue)) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2111,7 +2130,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (expectedIssue.equals(issue.getIssue())) {
+                if (issue.getIssue().equals(expectedIssue)) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2122,6 +2141,9 @@ public class ApkVerifierTest {
                         .append(": ")
                         .append(issue);
             }
+        }
+        if (expectedIssue == null && msg.length() == 0) {
+            return;
         }
 
         fail(

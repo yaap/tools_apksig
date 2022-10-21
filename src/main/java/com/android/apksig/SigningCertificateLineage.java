@@ -713,13 +713,28 @@ public class SigningCertificateLineage {
         return false;
     }
 
+    /**
+     * Returns whether the provided {@code cert} is the latest signing certificate in the lineage.
+     *
+     * <p>This method will only compare the provided {@code cert} against the latest signing
+     * certificate in the lineage; if a certificate that is not in the lineage is provided, this
+     * method will return false.
+     */
+    public boolean isCertificateLatestInLineage(X509Certificate cert) {
+        if (cert == null) {
+            throw new NullPointerException("cert == null");
+        }
+
+        return mSigningLineage.get(mSigningLineage.size() - 1).signingCert.equals(cert);
+    }
+
     private static int calculateDefaultFlags() {
         return PAST_CERT_INSTALLED_DATA | PAST_CERT_PERMISSION
                 | PAST_CERT_SHARED_USER_ID | PAST_CERT_AUTH;
     }
 
     /**
-     * Returns a new SigingCertificateLineage which terminates at the node corresponding to the
+     * Returns a new SigningCertificateLineage which terminates at the node corresponding to the
      * given certificate.  This is useful in the event of rotating to a new signing algorithm that
      * is only supported on some platform versions.  It enables a v3 signature to be generated using
      * this signing certificate and the shortened proof-of-rotation record from this sub lineage in
@@ -746,50 +761,94 @@ public class SigningCertificateLineage {
     }
 
     /**
-     * Consolidates all of the lineages found in an APK into one lineage, which is the longest one.
-     * In so doing, it also checks that all of the smaller lineages are contained in the largest,
-     * and that they properly cover the desired platform ranges.
+     * Consolidates all of the lineages found in an APK into one lineage. In so doing, it also
+     * checks that all of the lineages are contained in one common lineage.
      *
      * An APK may contain multiple lineages, one for each signer, which correspond to different
      * supported platform versions.  In this event, the lineage(s) from the earlier platform
-     * version(s) need to be present in the most recent (longest) one to make sure that when a
-     * platform version changes.
+     * version(s) should be present in the most recent, either directly or via a sublineage
+     * that would allow the earlier lineages to merge with the most recent.
      *
      * <note> This does not verify that the largest lineage corresponds to the most recent supported
-     * platform version.  That check requires is performed during v3 verification. </note>
+     * platform version.  That check is performed during v3 verification. </note>
      */
     public static SigningCertificateLineage consolidateLineages(
             List<SigningCertificateLineage> lineages) {
         if (lineages == null || lineages.isEmpty()) {
             return null;
         }
-        int largestIndex = 0;
-        int maxSize = 0;
+        SigningCertificateLineage consolidatedLineage = lineages.get(0);
+        for (int i = 1; i < lineages.size(); i++) {
+            consolidatedLineage = consolidatedLineage.mergeLineageWith(lineages.get(i));
+        }
+        return consolidatedLineage;
+    }
 
-        // determine the longest chain
-        for (int i = 0; i < lineages.size(); i++) {
-            int curSize = lineages.get(i).size();
-            if (curSize > maxSize) {
-                largestIndex = i;
-                maxSize = curSize;
-            }
+    /**
+     * Merges this lineage with the provided {@code otherLineage}.
+     *
+     * <p>The merged lineage does not currently handle merging capabilities of common signers and
+     * should only be used to determine the full signing history of a collection of lineages.
+     */
+    public SigningCertificateLineage mergeLineageWith(SigningCertificateLineage otherLineage) {
+        // Determine the ancestor and descendant lineages; if the original signer is in the other
+        // lineage, then it is considered a descendant.
+        SigningCertificateLineage ancestorLineage;
+        SigningCertificateLineage descendantLineage;
+        X509Certificate signerCert = mSigningLineage.get(0).signingCert;
+        if (otherLineage.isCertificateInLineage(signerCert)) {
+            descendantLineage = this;
+            ancestorLineage = otherLineage;
+        } else {
+            descendantLineage = otherLineage;
+            ancestorLineage = this;
         }
 
-        List<SigningCertificateNode> largestList = lineages.get(largestIndex).mSigningLineage;
-        // make sure all other lineages fit into this one, with the same capabilities
-        for (int i = 0; i < lineages.size(); i++) {
-            if (i == largestIndex) {
-                continue;
+        int ancestorIndex = 0;
+        int descendantIndex = 0;
+        SigningCertificateNode ancestorNode;
+        SigningCertificateNode descendantNode = descendantLineage.mSigningLineage.get(
+                descendantIndex++);
+        List<SigningCertificateNode> mergedLineage = new ArrayList<>();
+        // Iterate through the ancestor lineage and add the current node to the resulting lineage
+        // until the first node of the descendant is found.
+        while (ancestorIndex < ancestorLineage.size()) {
+            ancestorNode = ancestorLineage.mSigningLineage.get(ancestorIndex++);
+            if (ancestorNode.signingCert.equals(descendantNode.signingCert)) {
+                break;
             }
-            List<SigningCertificateNode> underTest = lineages.get(i).mSigningLineage;
-            if (!underTest.equals(largestList.subList(0, underTest.size()))) {
-                throw new IllegalArgumentException("Inconsistent SigningCertificateLineages. "
-                        + "Not all lineages are subsets of each other.");
-            }
+            mergedLineage.add(ancestorNode);
         }
-
-        // if we've made it this far, they all check out, so just return the largest
-        return lineages.get(largestIndex);
+        // If all of the nodes in the ancestor lineage have been added to the merged lineage, then
+        // there is no overlap between this and the provided lineage.
+        if (ancestorIndex == mergedLineage.size()) {
+            throw new IllegalArgumentException(
+                    "The provided lineage is not a descendant or an ancestor of this lineage");
+        }
+        // The descendant lineage's first node was in the ancestor's lineage above; add it to the
+        // merged lineage.
+        mergedLineage.add(descendantNode);
+        while (ancestorIndex < ancestorLineage.size()
+                && descendantIndex < descendantLineage.size()) {
+            ancestorNode = ancestorLineage.mSigningLineage.get(ancestorIndex++);
+            descendantNode = descendantLineage.mSigningLineage.get(descendantIndex++);
+            if (!ancestorNode.signingCert.equals(descendantNode.signingCert)) {
+                throw new IllegalArgumentException(
+                        "The provided lineage diverges from this lineage");
+            }
+            mergedLineage.add(descendantNode);
+        }
+        // At this point, one or both of the lineages have been exhausted and all signers to this
+        // point were a match between the two lineages; add any remaining elements from either
+        // lineage to the merged lineage.
+        while (ancestorIndex < ancestorLineage.size()) {
+            mergedLineage.add(ancestorLineage.mSigningLineage.get(ancestorIndex++));
+        }
+        while (descendantIndex < descendantLineage.size()) {
+            mergedLineage.add(descendantLineage.mSigningLineage.get(descendantIndex++));
+        }
+        return new SigningCertificateLineage(Math.min(mMinSdkVersion, otherLineage.mMinSdkVersion),
+                mergedLineage);
     }
 
     /**
@@ -900,8 +959,17 @@ public class SigningCertificateLineage {
          * Returns {@code true} if the capabilities of this object match those of the provided
          * object.
          */
-        public boolean equals(SignerCapabilities other) {
-            return this.mFlags == other.mFlags;
+        @Override
+        public boolean equals(Object other) {
+            if (this == other) return true;
+            if (!(other instanceof SignerCapabilities)) return false;
+
+            return this.mFlags == ((SignerCapabilities) other).mFlags;
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * mFlags;
         }
 
         /**

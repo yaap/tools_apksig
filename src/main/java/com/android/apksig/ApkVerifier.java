@@ -243,8 +243,10 @@ public class ApkVerifier {
                     return result;
                 }
             }
-            // Android P and newer attempts to verify APKs using APK Signature Scheme v3
-            if (minSdkVersion < MIN_SDK_WITH_V31_SUPPORT || foundApkSigSchemeIds.isEmpty()) {
+            // Android P and newer attempts to verify APKs using APK Signature Scheme v3; since a
+            // V3.1 block should only be written with a V3.0 block, always perform the V3.0 check
+            // if the minSdkVersion supports V3.0.
+            if (maxSdkVersion >= AndroidSdkVersion.P) {
                 try {
                     V3SchemeVerifier.Builder builder = new V3SchemeVerifier.Builder(apk,
                             zipSections, Math.max(minSdkVersion, AndroidSdkVersion.P),
@@ -1468,6 +1470,12 @@ public class ApkVerifier {
             if (source == null) {
                 return;
             }
+            if (source.containsErrors()) {
+                mErrors.addAll(source.getErrors());
+            }
+            if (source.containsWarnings()) {
+                mWarnings.addAll(source.getWarnings());
+            }
             switch (source.signatureSchemeVersion) {
                 case VERSION_APK_SIGNATURE_SCHEME_V2:
                     mVerifiedUsingV2Scheme = source.verified;
@@ -1883,6 +1891,16 @@ public class ApkVerifier {
              */
             public boolean getRotationTargetsDevRelease() {
                 return mRotationTargetsDevRelease;
+            }
+
+            /**
+             * Returns the {@link SigningCertificateLineage} for this signer; when an APK has
+             * SDK targeted signing configs, the lineage of each signer could potentially contain
+             * a subset of the full signing lineage and / or different capabilities for each signer
+             * in the lineage.
+             */
+            public SigningCertificateLineage getSigningCertificateLineage() {
+                return mSigningCertificateLineage;
             }
         }
 

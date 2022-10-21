@@ -25,6 +25,7 @@ import com.android.apksig.apk.ApkSigningBlockNotFoundException;
 import com.android.apksig.apk.ApkUtils;
 import com.android.apksig.apk.MinSdkVersionException;
 import com.android.apksig.internal.apk.v3.V3SchemeConstants;
+import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.ByteBufferDataSource;
 import com.android.apksig.internal.zip.CentralDirectoryRecord;
 import com.android.apksig.internal.zip.EocdRecord;
@@ -297,13 +298,20 @@ public class ApkSigner {
             List<DefaultApkSignerEngine.SignerConfig> engineSignerConfigs =
                     new ArrayList<>(mSignerConfigs.size());
             for (SignerConfig signerConfig : mSignerConfigs) {
-                engineSignerConfigs.add(
+                DefaultApkSignerEngine.SignerConfig.Builder signerConfigBuilder =
                         new DefaultApkSignerEngine.SignerConfig.Builder(
-                                        signerConfig.getName(),
-                                        signerConfig.getPrivateKey(),
-                                        signerConfig.getCertificates(),
-                                        signerConfig.getDeterministicDsaSigning())
-                                .build());
+                                signerConfig.getName(),
+                                signerConfig.getPrivateKey(),
+                                signerConfig.getCertificates(),
+                                signerConfig.getDeterministicDsaSigning());
+                int signerMinSdkVersion = signerConfig.getMinSdkVersion();
+                SigningCertificateLineage signerLineage =
+                        signerConfig.getSigningCertificateLineage();
+                if (signerMinSdkVersion > 0) {
+                    signerConfigBuilder.setLineageForMinSdkVersion(signerLineage,
+                            signerMinSdkVersion);
+                }
+                engineSignerConfigs.add(signerConfigBuilder.build());
             }
             DefaultApkSignerEngine.Builder signerEngineBuilder =
                     new DefaultApkSignerEngine.Builder(engineSignerConfigs, minSdkVersion)
@@ -1018,18 +1026,19 @@ public class ApkSigner {
         private final String mName;
         private final PrivateKey mPrivateKey;
         private final List<X509Certificate> mCertificates;
-        private boolean mDeterministicDsaSigning;
+        private final boolean mDeterministicDsaSigning;
+        private final int mMinSdkVersion;
+        private final SigningCertificateLineage mSigningCertificateLineage;
 
-        private SignerConfig(
-                String name,
-                PrivateKey privateKey,
-                List<X509Certificate> certificates,
-                boolean deterministicDsaSigning) {
-            mName = name;
-            mPrivateKey = privateKey;
-            mCertificates = Collections.unmodifiableList(new ArrayList<>(certificates));
-            mDeterministicDsaSigning = deterministicDsaSigning;
+        private SignerConfig(Builder builder) {
+            mName = builder.mName;
+            mPrivateKey = builder.mPrivateKey;
+            mCertificates = Collections.unmodifiableList(new ArrayList<>(builder.mCertificates));
+            mDeterministicDsaSigning = builder.mDeterministicDsaSigning;
+            mMinSdkVersion = builder.mMinSdkVersion;
+            mSigningCertificateLineage = builder.mSigningCertificateLineage;
         }
+
         /** Returns the name of this signer. */
         public String getName() {
             return mName;
@@ -1048,12 +1057,21 @@ public class ApkSigner {
             return mCertificates;
         }
 
-
         /**
          * If this signer is a DSA signer, whether or not the signing is done deterministically.
          */
         public boolean getDeterministicDsaSigning() {
             return mDeterministicDsaSigning;
+        }
+
+        /** Returns the minimum SDK version for which this signer should be used. */
+        public int getMinSdkVersion() {
+            return mMinSdkVersion;
+        }
+
+        /** Returns the {@link SigningCertificateLineage} for this signer. */
+        public SigningCertificateLineage getSigningCertificateLineage() {
+            return mSigningCertificateLineage;
         }
 
         /** Builder of {@link SignerConfig} instances. */
@@ -1062,6 +1080,9 @@ public class ApkSigner {
             private final PrivateKey mPrivateKey;
             private final List<X509Certificate> mCertificates;
             private final boolean mDeterministicDsaSigning;
+
+            private int mMinSdkVersion;
+            private SigningCertificateLineage mSigningCertificateLineage;
 
             /**
              * Constructs a new {@code Builder}.
@@ -1104,13 +1125,71 @@ public class ApkSigner {
                 mDeterministicDsaSigning = deterministicDsaSigning;
             }
 
+            /** @see #setLineageForMinSdkVersion(SigningCertificateLineage, int) */
+            public Builder setMinSdkVersion(int minSdkVersion) {
+                return setLineageForMinSdkVersion(null, minSdkVersion);
+            }
+
+            /**
+             * Sets the specified {@code minSdkVersion} as the minimum Android platform version
+             * (API level) for which the provided {@code lineage} (where applicable) should be used
+             * to produce the APK's signature. This method is useful if callers want to specify a
+             * particular rotated signer or lineage with restricted capabilities for later
+             * platform releases.
+             *
+             * <p><em>Note:</em>>The V1 and V2 signature schemes do not support key rotation and
+             * signing lineages with capabilities; only an app's original signer(s) can be used for
+             * the V1 and V2 signature blocks. Because of this, only a value of {@code
+             * minSdkVersion} >= 28 (Android P) where support for the V3 signature scheme was
+             * introduced can be specified.
+             *
+             * <p><em>Note:</em>Due to limitations with platform targeting in the V3.0 signature
+             * scheme, specifying a {@code minSdkVersion} value <= 32 (Android Sv2) will result in
+             * the current {@code SignerConfig} being used in the V3.0 signing block and applied to
+             * Android P through at least Sv2 (and later depending on the {@code minSdkVersion} for
+             * subsequent {@code SignerConfig} instances). Because of this, only a single {@code
+             * SignerConfig} can be instantiated with a minimum SDK version <= 32.
+             *
+             * @param lineage the {@code SigningCertificateLineage} to target the specified {@code
+             *                minSdkVersion}
+             * @param minSdkVersion the minimum SDK version for which this {@code SignerConfig}
+             *                      should be used
+             * @return this {@code Builder} instance
+             *
+             * @throws IllegalArgumentException if the provided {@code minSdkVersion} < 28 or the
+             * certificate provided in the constructor is not in the specified {@code lineage}.
+             */
+            public Builder setLineageForMinSdkVersion(SigningCertificateLineage lineage,
+                    int minSdkVersion) {
+                if (minSdkVersion < AndroidSdkVersion.P) {
+                    throw new IllegalArgumentException(
+                            "SDK targeted signing config is only supported with the V3 signature "
+                                    + "scheme on Android P (SDK version "
+                                    + AndroidSdkVersion.P + ") and later");
+                }
+                if (minSdkVersion < MIN_SDK_WITH_V31_SUPPORT) {
+                    minSdkVersion = AndroidSdkVersion.P;
+                }
+                mMinSdkVersion = minSdkVersion;
+                // If a lineage is provided, ensure the signing certificate for this signer is in
+                // the lineage; in the case of multiple signing certificates, the first is always
+                // used in the lineage.
+                if (lineage != null && !lineage.isCertificateInLineage(mCertificates.get(0))) {
+                    throw new IllegalArgumentException(
+                            "The provided lineage does not contain the signing certificate, "
+                                    + mCertificates.get(0).getSubjectDN()
+                                    + ", for this SignerConfig");
+                }
+                mSigningCertificateLineage = lineage;
+                return this;
+            }
+
             /**
              * Returns a new {@code SignerConfig} instance configured based on the configuration of
              * this builder.
              */
             public SignerConfig build() {
-                return new SignerConfig(mName, mPrivateKey, mCertificates,
-                        mDeterministicDsaSigning);
+                return new SignerConfig(this);
             }
         }
     }
