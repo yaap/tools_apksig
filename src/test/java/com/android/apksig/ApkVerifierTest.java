@@ -1812,6 +1812,17 @@ public class ApkVerifierTest {
         assertTrue(result.isVerifiedUsingV31Scheme());
     }
 
+    @Test(expected = IOException.class)
+    public void verify_largeFileSize_doesNotFailWithOOMError() throws Exception {
+        // During V1 signature verification, each file needs to be uncompressed to calculate
+        // its digest; the verifier uses the file size from the central directory record to
+        // determine the size of the byte[] to allocate. If there is not sufficient memory
+        // in the heap for the allocation, the verification should fail with an exception
+        // instead of an OutOfMemoryError. This test uses an APK where the size of the
+        // MANIFEST.MF is reported as 2016310387.
+        verify("incorrect-manifest-size.apk");
+    }
+
     @Test
     public void compareMatchingDigests() throws Exception {
         Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
