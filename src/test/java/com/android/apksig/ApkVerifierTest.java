@@ -252,6 +252,20 @@ public class ApkVerifierTest {
     }
 
     @Test
+    public void testV1MaxSupportedSignersAccepted() throws Exception {
+        // The APK Signature Scheme V1 supports a maximum of 10 signers; this test ensures an
+        // APK signed with that many signers successfully verifies.
+        assertVerified(verify("v1-only-10-signers.apk"));
+    }
+
+    @Test
+    public void testV1MoreThanMaxSupportedSignersRejected() throws Exception {
+        // This test ensure an APK signed with more than the supported number of signers fails
+        // to verify.
+        assertVerificationFailure("v1-only-11-signers.apk", Issue.JAR_SIG_MAX_SIGNATURES_EXCEEDED);
+    }
+
+    @Test
     public void testV2StrippedRejected() throws Exception {
         // APK signed with v1 and v2 schemes, but v2 signature was stripped from the file (by using
         // zipalign).
@@ -635,6 +649,23 @@ public class ApkVerifierTest {
                 "v2-only-two-signers-second-signer-no-supported-sig.apk",
                 Issue.V2_SIG_NO_SUPPORTED_SIGNATURES);
     }
+
+    @Test
+    public void testV2MaxSupportedSignersAccepted() throws Exception {
+        // The APK Signature Scheme v2 supports a maximum of 10 signers; this test ensures an
+        // APK signed with that many signers successfully verifies.
+        assertVerified(verifyForMinSdkVersion("v2-only-10-signers.apk", AndroidSdkVersion.N));
+    }
+
+    @Test
+    public void testV2MoreThanMaxSupportedSignersRejected() throws Exception {
+        // This test ensure an APK signed with more than the supported number of signers fails
+        // to verify.
+        assertVerificationFailure(
+                verifyForMinSdkVersion("v2-only-11-signers.apk", AndroidSdkVersion.N),
+                Issue.V2_SIG_MAX_SIGNATURES_EXCEEDED);
+    }
+
 
     @Test
     public void testCorrectCertUsedFromPkcs7SignedDataCertsSet() throws Exception {
