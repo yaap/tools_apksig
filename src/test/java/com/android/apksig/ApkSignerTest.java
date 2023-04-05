@@ -838,6 +838,106 @@ public class ApkSignerTest {
     }
 
     @Test
+    public void testV1SigningAllowedWithMaximumNumberOfSigners() throws Exception {
+        // The APK Signature Scheme v1 supports a maximum of 10 signers; this test verifies a
+        // signing config with the maximum number of signers is allowed to sign the APK.
+        List<ApkSigner.SignerConfig> signers = List.of(
+                getDefaultSignerConfigFromResources("dsa-1024"),
+                getDefaultSignerConfigFromResources("dsa-2048"),
+                getDefaultSignerConfigFromResources("dsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-1024"),
+                getDefaultSignerConfigFromResources("rsa-2048"),
+                getDefaultSignerConfigFromResources("rsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-4096"),
+                getDefaultSignerConfigFromResources("rsa-8192"),
+                getDefaultSignerConfigFromResources("ec-p256"),
+                getDefaultSignerConfigFromResources("ec-p384")
+        );
+        sign("original.apk",
+                new ApkSigner.Builder(signers)
+                        .setV1SigningEnabled(true)
+                        .setV2SigningEnabled(false)
+                        .setV3SigningEnabled(false)
+                        .setV4SigningEnabled(false));
+    }
+
+    @Test
+    public void testV1SigningRejectedWithMoreThanMaximumNumberOfSigners() throws Exception {
+        // This test ensures a v1 signing config with more than the maximum supported number
+        // of signers will fail to sign.
+        List<ApkSigner.SignerConfig> signers = List.of(
+                getDefaultSignerConfigFromResources("dsa-1024"),
+                getDefaultSignerConfigFromResources("dsa-2048"),
+                getDefaultSignerConfigFromResources("dsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-1024"),
+                getDefaultSignerConfigFromResources("rsa-2048"),
+                getDefaultSignerConfigFromResources("rsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-4096"),
+                getDefaultSignerConfigFromResources("rsa-8192"),
+                getDefaultSignerConfigFromResources("ec-p256"),
+                getDefaultSignerConfigFromResources("ec-p384"),
+                getDefaultSignerConfigFromResources("ec-p521")
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+            sign("original.apk",
+                    new ApkSigner.Builder(signers)
+                            .setV1SigningEnabled(true)
+                            .setV2SigningEnabled(false)
+                            .setV3SigningEnabled(false)
+                            .setV4SigningEnabled(false)));
+    }
+
+    @Test
+    public void testV2SigningAllowedWithMaximumNumberOfSigners() throws Exception {
+        // The APK Signature Scheme v2 supports a maximum of 10 signers; this test verifies a
+        // signing config with the maximum number of signers is allowed to sign the APK.
+        List<ApkSigner.SignerConfig> signers = List.of(
+                getDefaultSignerConfigFromResources("dsa-1024"),
+                getDefaultSignerConfigFromResources("dsa-2048"),
+                getDefaultSignerConfigFromResources("dsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-1024"),
+                getDefaultSignerConfigFromResources("rsa-2048"),
+                getDefaultSignerConfigFromResources("rsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-4096"),
+                getDefaultSignerConfigFromResources("rsa-8192"),
+                getDefaultSignerConfigFromResources("ec-p256"),
+                getDefaultSignerConfigFromResources("ec-p384")
+        );
+        sign("original.apk",
+                new ApkSigner.Builder(signers)
+                        .setV1SigningEnabled(false)
+                        .setV2SigningEnabled(true)
+                        .setV3SigningEnabled(false)
+                        .setV4SigningEnabled(false));
+    }
+
+    @Test
+    public void testV2SigningRejectedWithMoreThanMaximumNumberOfSigners() throws Exception {
+        // This test ensures a v2 signing config with more than the maximum supported number
+        // of signers will fail to sign.
+        List<ApkSigner.SignerConfig> signers = List.of(
+                getDefaultSignerConfigFromResources("dsa-1024"),
+                getDefaultSignerConfigFromResources("dsa-2048"),
+                getDefaultSignerConfigFromResources("dsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-1024"),
+                getDefaultSignerConfigFromResources("rsa-2048"),
+                getDefaultSignerConfigFromResources("rsa-3072"),
+                getDefaultSignerConfigFromResources("rsa-4096"),
+                getDefaultSignerConfigFromResources("rsa-8192"),
+                getDefaultSignerConfigFromResources("ec-p256"),
+                getDefaultSignerConfigFromResources("ec-p384"),
+                getDefaultSignerConfigFromResources("ec-p521")
+        );
+        assertThrows(IllegalArgumentException.class, () ->
+                sign("original.apk",
+                        new ApkSigner.Builder(signers)
+                                .setV1SigningEnabled(false)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(false)
+                                .setV4SigningEnabled(false)));
+    }
+
+    @Test
     public void testWeirdZipCompressionMethod() throws Exception {
         // Any ZIP compression method other than STORED is treated as DEFLATED by Android.
         // This APK declares compression method 21 (neither STORED nor DEFLATED) for CERT.RSA entry,
