@@ -1276,6 +1276,15 @@ public class ApkVerifier {
         }
 
         private void mergeFrom(ApkSigningBlockUtils.Result source) {
+            if (source == null) {
+                return;
+            }
+            if (source.containsErrors()) {
+                mErrors.addAll(source.getErrors());
+            }
+            if (source.containsWarnings()) {
+                mWarnings.addAll(source.getWarnings());
+            }
             switch (source.signatureSchemeVersion) {
                 case ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V2:
                     mVerifiedUsingV2Scheme = source.verified;
