@@ -20,8 +20,13 @@ import com.android.apksig.ApkSignerTest;
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.util.DataSource;
 
+import org.junit.rules.TemporaryFolder;
+
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.ByteBuffer;
 import java.security.KeyFactory;
 import java.security.NoSuchAlgorithmException;
@@ -139,5 +144,18 @@ public final class Resources {
             String fileResourceName) throws IOException {
         DataSource lineageDataSource = toDataSource(cls, fileResourceName);
         return SigningCertificateLineage.readFromDataSource(lineageDataSource);
+    }
+
+    public static File toFile(Class<?> cls, String fileResourceName,
+            TemporaryFolder temporaryFolder) throws IOException {
+        File outFile = temporaryFolder.newFile();
+        try (InputStream in = cls.getResourceAsStream(fileResourceName);
+             OutputStream out = new FileOutputStream(outFile)) {
+            if (in == null) {
+                throw new IllegalArgumentException("Resource not found: " + fileResourceName);
+            }
+            in.transferTo(out);
+            return outFile;
+        }
     }
 }

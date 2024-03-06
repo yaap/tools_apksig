@@ -40,6 +40,11 @@ public class Constants {
      */
     public static final int MAX_APK_SIGNERS = 10;
 
+    /**
+     * The default page alignment for native library files in bytes.
+     */
+    public static final short LIBRARY_PAGE_ALIGNMENT_BYTES = 16384;
+
     public static final String MANIFEST_ENTRY_NAME = V1SchemeConstants.MANIFEST_ENTRY_NAME;
 
     public static final int APK_SIGNATURE_SCHEME_V2_BLOCK_ID =

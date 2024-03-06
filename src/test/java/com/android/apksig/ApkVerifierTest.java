@@ -44,13 +44,17 @@ import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.security.Provider;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import org.junit.Assume;
+import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
@@ -75,6 +79,8 @@ import java.util.stream.Stream;
 
 @RunWith(JUnit4.class)
 public class ApkVerifierTest {
+    @Rule
+    public TemporaryFolder mTemporaryFolder = new TemporaryFolder();
 
     private static final String[] DSA_KEY_NAMES = {"1024", "2048", "3072"};
     private static final String[] DSA_KEY_NAMES_1024_AND_SMALLER = {"1024"};
@@ -574,9 +580,10 @@ public class ApkVerifierTest {
 
         // Signature claims to be RSA PKCS#1 v1.5 with SHA-256, but is actually using SHA-512.
         // Based on v2-only-with-rsa-pkcs1-sha256-2048.apk.
-        assertVerificationFailure(
-                "v2-only-with-rsa-pkcs1-sha256-2048-sig-does-not-verify.apk",
-                Issue.V2_SIG_VERIFY_EXCEPTION);
+        assertVerificationIssue(
+                verify("v2-only-with-rsa-pkcs1-sha256-2048-sig-does-not-verify.apk"),
+                true,
+                Issue.V2_SIG_VERIFY_EXCEPTION, Issue.V2_SIG_DID_NOT_VERIFY);
 
         // Bitflip in the ECDSA signature. Based on v2-only-with-ecdsa-sha256-p256.apk.
         assertVerificationFailure(
@@ -1843,6 +1850,16 @@ public class ApkVerifierTest {
         assertTrue(result.isVerifiedUsingV31Scheme());
     }
 
+    @Test
+    public void verify41_v41DigestMismatchedWithV31_reportsError() throws Exception {
+        // This test verifies a digest mismatch between the v4.1 signature and the v3.1 signature
+        // is properly reported during v4 signature verification.
+        ApkVerifier.Result result = verifyWithV4Signature("v41-digest-mismatched-with-v31.apk",
+                "v41-digest-mismatched-with-v31.apk.idsig");
+
+        assertVerificationFailure(result, Issue.V4_SIG_V2_V3_DIGESTS_MISMATCH);
+    }
+
     @Test(expected = IOException.class)
     public void verify_largeFileSize_doesNotFailWithOOMError() throws Exception {
         // During V1 signature verification, each file needs to be uncompressed to calculate
@@ -1972,6 +1989,21 @@ public class ApkVerifierTest {
         return builder.build().verify();
     }
 
+    private ApkVerifier.Result verifyWithV4Signature(
+            String apkFilenameInResources,
+            String v4SignatureFile)
+            throws IOException, ApkFormatException, NoSuchAlgorithmException, URISyntaxException {
+        byte[] apkBytes = Resources.toByteArray(getClass(), apkFilenameInResources);
+
+        ApkVerifier.Builder builder =
+                new ApkVerifier.Builder(DataSources.asDataSource(ByteBuffer.wrap(apkBytes)));
+        if (v4SignatureFile != null) {
+            builder.setV4SignatureFile(
+                    Resources.toFile(getClass(), v4SignatureFile, mTemporaryFolder));
+        }
+        return builder.build().verify();
+    }
+
     private ApkVerifier.Result verifySourceStamp(String apkFilenameInResources) throws Exception {
         return verifySourceStamp(apkFilenameInResources, null, null, null);
     }
@@ -2089,28 +2121,30 @@ public class ApkVerifierTest {
     }
 
     static void assertVerificationFailure(ApkVerifier.Result result, Issue expectedIssue) {
-        assertVerificationIssue(result, expectedIssue, true);
+        assertVerificationIssue(result, true, expectedIssue);
     }
 
     static void assertVerificationWarning(ApkVerifier.Result result, Issue expectedIssue) {
-        assertVerificationIssue(result, expectedIssue, false);
+        assertVerificationIssue(result, false, expectedIssue);
     }
 
     /**
-     * Asserts the provided {@code result} contains the {@code expectedIssue}; if {@code
+     * Asserts the provided {@code result} contains one of the {@code expectedIssues}; if {@code
      * verifyError} is set to {@code true} then the specified {@link Issue} will be expected as an
      * error, otherwise it will be expected as a warning.
      */
-    private static void assertVerificationIssue(ApkVerifier.Result result, Issue expectedIssue,
-            boolean verifyError) {
+    private static void assertVerificationIssue(ApkVerifier.Result result, boolean verifyError,
+            Issue... expectedIssues) {
+        List<Issue> expectedIssuesList = expectedIssues != null
+                ? Arrays.asList(expectedIssues) : Collections.emptyList();
         if (result.isVerified() && verifyError) {
-            fail("APK verification succeeded instead of failing with " + expectedIssue);
+            fail("APK verification succeeded instead of failing with " + expectedIssuesList);
             return;
         }
 
         StringBuilder msg = new StringBuilder();
         for (IssueWithParams issue : (verifyError ? result.getErrors() : result.getWarnings())) {
-            if (issue.getIssue().equals(expectedIssue)) {
+            if (expectedIssuesList.contains(issue.getIssue())) {
                 return;
             }
             if (msg.length() > 0) {
@@ -2122,7 +2156,7 @@ public class ApkVerifierTest {
             String signerName = signer.getName();
             for (ApkVerifier.IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (issue.getIssue().equals(expectedIssue)) {
+                if (expectedIssuesList.contains(issue.getIssue())) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2140,7 +2174,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (issue.getIssue().equals(expectedIssue)) {
+                if (expectedIssuesList.contains(issue.getIssue())) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2156,7 +2190,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (issue.getIssue().equals(expectedIssue)) {
+                if (expectedIssuesList.contains(issue.getIssue())) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2172,7 +2206,7 @@ public class ApkVerifierTest {
             String signerName = "signer #" + (signer.getIndex() + 1);
             for (IssueWithParams issue : (verifyError ? signer.getErrors()
                     : signer.getWarnings())) {
-                if (issue.getIssue().equals(expectedIssue)) {
+                if (expectedIssuesList.contains(issue.getIssue())) {
                     return;
                 }
                 if (msg.length() > 0) {
@@ -2184,14 +2218,14 @@ public class ApkVerifierTest {
                         .append(issue);
             }
         }
-        if (expectedIssue == null && msg.length() == 0) {
+        if ((expectedIssuesList.isEmpty() || expectedIssues[0] == null) && msg.length() == 0) {
             return;
         }
 
         fail(
                 "APK failed verification for the wrong reason"
                         + ". Expected: "
-                        + expectedIssue
+                        + expectedIssuesList
                         + ", actual: "
                         + msg);
     }

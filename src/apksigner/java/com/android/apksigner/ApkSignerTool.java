@@ -16,6 +16,8 @@
 
 package com.android.apksigner;
 
+import static com.android.apksig.Constants.LIBRARY_PAGE_ALIGNMENT_BYTES;
+
 import com.android.apksig.ApkSigner;
 import com.android.apksig.ApkVerifier;
 import com.android.apksig.SigningCertificateLineage;
@@ -150,6 +152,8 @@ public class ApkSignerTool {
         boolean alignFileSize = false;
         boolean verityEnabled = false;
         boolean debuggableApkPermitted = true;
+        boolean alignmentPreserved = false;
+        int libPageAlignment = LIBRARY_PAGE_ALIGNMENT_BYTES;
         int minSdkVersion = 1;
         boolean minSdkVersionSpecified = false;
         int maxSdkVersion = Integer.MAX_VALUE;
@@ -208,6 +212,11 @@ public class ApkSignerTool {
                 verityEnabled = optionsParser.getOptionalBooleanValue(true);
             } else if ("debuggable-apk-permitted".equals(optionName)) {
                 debuggableApkPermitted = optionsParser.getOptionalBooleanValue(true);
+            } else if ("alignment-preserved".equals(optionName)) {
+                alignmentPreserved = optionsParser.getOptionalBooleanValue(true);
+            } else if ("lib-page-alignment".equals(optionName)) {
+                libPageAlignment = optionsParser.getRequiredIntValue(
+                        "Native library page alignment size in bytes");
             } else if ("next-signer".equals(optionName)) {
                 if (!signerParams.isEmpty()) {
                     signers.add(signerParams);
@@ -395,7 +404,9 @@ public class ApkSignerTool {
                         .setDebuggableApkPermitted(debuggableApkPermitted)
                         .setSigningCertificateLineage(lineage)
                         .setMinSdkVersionForRotation(rotationMinSdkVersion)
-                        .setRotationTargetsDevRelease(rotationTargetsDevRelease);
+                        .setRotationTargetsDevRelease(rotationTargetsDevRelease)
+                        .setAlignmentPreserved(alignmentPreserved)
+                        .setLibraryPageAlignmentBytes(libPageAlignment);
         if (minSdkVersionSpecified) {
             apkSignerBuilder.setMinSdkVersion(minSdkVersion);
         }

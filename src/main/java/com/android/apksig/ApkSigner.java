@@ -16,6 +16,7 @@
 
 package com.android.apksig;
 
+import static com.android.apksig.Constants.LIBRARY_PAGE_ALIGNMENT_BYTES;
 import static com.android.apksig.apk.ApkUtils.SOURCE_STAMP_CERTIFICATE_HASH_ZIP_ENTRY_NAME;
 import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT;
 import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V3_SUPPORT;
@@ -83,8 +84,6 @@ public class ApkSigner {
      */
     private static final short ALIGNMENT_ZIP_EXTRA_DATA_FIELD_MIN_SIZE_BYTES = 6;
 
-    private static final short ANDROID_COMMON_PAGE_ALIGNMENT_BYTES = 4096;
-
     private static final short ANDROID_FILE_ALIGNMENT_BYTES = 4096;
 
     /** Name of the Android manifest ZIP entry in APKs. */
@@ -107,6 +106,8 @@ public class ApkSigner {
     private final boolean mV4ErrorReportingEnabled;
     private final boolean mDebuggableApkPermitted;
     private final boolean mOtherSignersSignaturesPreserved;
+    private final boolean mAlignmentPreserved;
+    private final int mLibraryPageAlignmentBytes;
     private final String mCreatedBy;
 
     private final ApkSignerEngine mSignerEngine;
@@ -140,6 +141,8 @@ public class ApkSigner {
             boolean v4ErrorReportingEnabled,
             boolean debuggableApkPermitted,
             boolean otherSignersSignaturesPreserved,
+            boolean alignmentPreserved,
+            int libraryPageAlignmentBytes,
             String createdBy,
             ApkSignerEngine signerEngine,
             File inputApkFile,
@@ -167,6 +170,8 @@ public class ApkSigner {
         mV4ErrorReportingEnabled = v4ErrorReportingEnabled;
         mDebuggableApkPermitted = debuggableApkPermitted;
         mOtherSignersSignaturesPreserved = otherSignersSignaturesPreserved;
+        mAlignmentPreserved = alignmentPreserved;
+        mLibraryPageAlignmentBytes = libraryPageAlignmentBytes;
         mCreatedBy = createdBy;
 
         mSignerEngine = signerEngine;
@@ -445,7 +450,7 @@ public class ApkSigner {
                 // Output entry's Local File Header + data
                 long outputLocalFileHeaderOffset = outputOffset;
                 OutputSizeAndDataOffset outputLfrResult =
-                        outputInputJarEntryLfhRecordPreservingDataAlignment(
+                        outputInputJarEntryLfhRecord(
                                 inputApkLfhSection,
                                 inputLocalFileRecord,
                                 outputApkOut,
@@ -744,14 +749,14 @@ public class ApkSigner {
         }
     }
 
-    private static OutputSizeAndDataOffset outputInputJarEntryLfhRecordPreservingDataAlignment(
+    private OutputSizeAndDataOffset outputInputJarEntryLfhRecord(
             DataSource inputLfhSection,
             LocalFileRecord inputRecord,
             DataSink outputLfhSection,
             long outputOffset)
             throws IOException {
         long inputOffset = inputRecord.getStartOffsetInArchive();
-        if (inputOffset == outputOffset) {
+        if (inputOffset == outputOffset && mAlignmentPreserved) {
             // This record's data will be aligned same as in the input APK.
             return new OutputSizeAndDataOffset(
                     inputRecord.outputRecord(inputLfhSection, outputLfhSection),
@@ -759,8 +764,8 @@ public class ApkSigner {
         }
         int dataAlignmentMultiple = getInputJarEntryDataAlignmentMultiple(inputRecord);
         if ((dataAlignmentMultiple <= 1)
-                || ((inputOffset % dataAlignmentMultiple)
-                        == (outputOffset % dataAlignmentMultiple))) {
+                || ((inputOffset % dataAlignmentMultiple) == (outputOffset % dataAlignmentMultiple)
+                        && mAlignmentPreserved)) {
             // This record's data will be aligned same as in the input APK.
             return new OutputSizeAndDataOffset(
                     inputRecord.outputRecord(inputLfhSection, outputLfhSection),
@@ -768,7 +773,7 @@ public class ApkSigner {
         }
 
         long inputDataStartOffset = inputOffset + inputRecord.getDataStartOffsetInRecord();
-        if ((inputDataStartOffset % dataAlignmentMultiple) != 0) {
+        if ((inputDataStartOffset % dataAlignmentMultiple) != 0 && mAlignmentPreserved) {
             // This record's data is not aligned in the input APK. No need to align it in the
             // output.
             return new OutputSizeAndDataOffset(
@@ -793,7 +798,7 @@ public class ApkSigner {
                 dataOffset);
     }
 
-    private static int getInputJarEntryDataAlignmentMultiple(LocalFileRecord entry) {
+    private int getInputJarEntryDataAlignmentMultiple(LocalFileRecord entry) {
         if (entry.isDataCompressed()) {
             // Compressed entries don't need to be aligned
             return 1;
@@ -833,7 +838,7 @@ public class ApkSigner {
         }
 
         // Fall back to filename-based defaults
-        return (entry.getName().endsWith(".so")) ? ANDROID_COMMON_PAGE_ALIGNMENT_BYTES : 4;
+        return (entry.getName().endsWith(".so")) ? mLibraryPageAlignmentBytes : 4;
     }
 
     private static ByteBuffer createExtraFieldToAlignData(
@@ -1221,6 +1226,8 @@ public class ApkSigner {
         private boolean mV4ErrorReportingEnabled = false;
         private boolean mDebuggableApkPermitted = true;
         private boolean mOtherSignersSignaturesPreserved;
+        private boolean mAlignmentPreserved = false;
+        private int mLibraryPageAlignmentBytes = LIBRARY_PAGE_ALIGNMENT_BYTES;
         private String mCreatedBy;
         private Integer mMinSdkVersion;
         private int mRotationMinSdkVersion = V3SchemeConstants.DEFAULT_ROTATION_MIN_SDK_VERSION;
@@ -1708,6 +1715,26 @@ public class ApkSigner {
         }
 
         /**
+         * Sets whether the existing alignment within the APK should be preserved; the
+         * default for this setting is false. When this value is false, the value provided to
+         * {@link #setLibraryPageAlignmentBytes(int)} will be used to page align native library
+         * files and 4 bytes will be used to align all other uncompressed files.
+         */
+        public Builder setAlignmentPreserved(boolean alignmentPreserved) {
+            mAlignmentPreserved = alignmentPreserved;
+            return this;
+        }
+
+        /**
+         * Sets the number of bytes to be used to page align native library files in the APK; the
+         * default for this setting is {@link Constants#LIBRARY_PAGE_ALIGNMENT_BYTES}.
+         */
+        public Builder setLibraryPageAlignmentBytes(int libraryPageAlignmentBytes) {
+            mLibraryPageAlignmentBytes = libraryPageAlignmentBytes;
+            return this;
+        }
+
+        /**
          * Returns a new {@code ApkSigner} instance initialized according to the configuration of
          * this builder.
          */
@@ -1758,6 +1785,8 @@ public class ApkSigner {
                     mV4ErrorReportingEnabled,
                     mDebuggableApkPermitted,
                     mOtherSignersSignaturesPreserved,
+                    mAlignmentPreserved,
+                    mLibraryPageAlignmentBytes,
                     mCreatedBy,
                     mSignerEngine,
                     mInputApkFile,

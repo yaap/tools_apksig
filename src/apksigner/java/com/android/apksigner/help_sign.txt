@@ -92,6 +92,16 @@ certificate.
                       By default, signing debuggable APKs is permitted, for
                       backward compatibility with older apksigner versions.
 
+--alignment-preserved  Whether the existing alignment within the APK should
+                      be preserved; the default for this setting is false.
+                      When this value is false, the value provided to
+                      --lib-page-alignment will be used to page align native
+                      library files and all other files will be aligned to 4
+                      bytes in the APK.
+
+--lib-page-alignment  The number of bytes to be used to page align native
+                      library files in the APK; the default value is 16384.
+
 --lineage             Signing certificate history to use in the event that
                       signing certificates changed for an APK using APK
                       Signature Scheme v3 supported signing certificate
