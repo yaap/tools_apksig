@@ -69,3 +69,15 @@ java_binary_host {
         },
     },
 }
+
+java_test_host {
+    name: "apksig-test",
+    srcs: ["src/test/java/**/*.java"],
+    java_resource_dirs: ["src/test/resources"],
+    static_libs: [
+        "apksig",
+        "bouncycastle-unbundled",
+        "conscrypt-unbundled",
+        "junit"
+    ]
+}

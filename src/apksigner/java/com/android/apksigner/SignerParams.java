@@ -16,9 +16,13 @@
 
 package com.android.apksigner;
 
+import static java.util.Arrays.stream;
+
+import com.android.apksig.KeyConfig;
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.SigningCertificateLineage.SignerCapabilities;
 import com.android.apksig.internal.util.X509CertificateUtils;
+import com.android.apksig.kms.KmsType;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -27,6 +31,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
+import java.security.GeneralSecurityException;
 import java.security.InvalidKeyException;
 import java.security.Key;
 import java.security.KeyFactory;
@@ -37,13 +42,15 @@ import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.UnrecoverableKeyException;
 import java.security.cert.Certificate;
+import java.security.cert.CertificateException;
 import java.security.cert.X509Certificate;
 import java.security.spec.InvalidKeySpecException;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.ArrayList;
-import java.util.Collection;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.stream.Collectors;
+
 import javax.crypto.EncryptedPrivateKeyInfo;
 import javax.crypto.SecretKey;
 import javax.crypto.SecretKeyFactory;
@@ -68,7 +75,7 @@ public class SignerParams {
 
     private String v1SigFileBasename;
 
-    private PrivateKey privateKey;
+    private KeyConfig mKeyConfig;
     private List<X509Certificate> certs;
     private final SignerCapabilities.Builder signerCapabilitiesBuilder =
             new SignerCapabilities.Builder();
@@ -144,8 +151,19 @@ public class SignerParams {
         this.v1SigFileBasename = v1SigFileBasename;
     }
 
+    /**
+     * Returns the signing key of this signer.
+     *
+     * @deprecated Use {@link #getKeyConfig()} instead of accessing a {@link PrivateKey}. If the
+     *     user of ApkSigner is signing with a KMS instead of JCA, this method will return null.
+     */
+    @Deprecated
     public PrivateKey getPrivateKey() {
-        return privateKey;
+        return mKeyConfig.match(jca -> jca.privateKey, kms -> null);
+    }
+
+    public KeyConfig getKeyConfig() {
+        return mKeyConfig;
     }
 
     public List<X509Certificate> getCerts() {
@@ -186,26 +204,48 @@ public class SignerParams {
                 && (keyFile == null)
                 && (certFile == null)
                 && (v1SigFileBasename == null)
-                && (privateKey == null)
+                && (mKeyConfig == null)
                 && (certs == null);
     }
 
     public void loadPrivateKeyAndCerts(PasswordRetriever passwordRetriever) throws Exception {
+        KmsType kmsType =
+                stream(KmsType.values())
+                        .filter(v -> v.toString().equalsIgnoreCase(keystoreType))
+                        .findFirst()
+                        .orElse(null);
+
+        if (kmsType != null) {
+            if (keystoreKeyAlias == null) {
+                throw new ParameterException(
+                        "key alias (--ks-key-alias) is required if ks-type is a cloud KMS");
+            }
+            certs = loadCertsFromFile(certFile);
+            mKeyConfig = new KeyConfig.Kms(kmsType, keystoreKeyAlias);
+            return;
+        }
+
         if (keystoreFile != null) {
             if (keyFile != null) {
                 throw new ParameterException(
                         "--ks and --key may not be specified at the same time");
-            } else if (certFile != null) {
+            }
+            if (certFile != null) {
                 throw new ParameterException(
                         "--ks and --cert may not be specified at the same time");
             }
             loadPrivateKeyAndCertsFromKeyStore(passwordRetriever);
-        } else if (keyFile != null) {
-            loadPrivateKeyAndCertsFromFiles(passwordRetriever);
-        } else {
-            throw new ParameterException(
-                    "KeyStore (--ks) or private key file (--key) must be specified");
+            return;
         }
+
+        if (keyFile != null) {
+            loadPrivateKeyAndCertsFromFiles(passwordRetriever);
+            return;
+        }
+
+        throw new ParameterException(
+                "KeyStore (--ks), private key file (--key), or key alias and cloud provider"
+                        + " (--ks-key-alias and --ks-type) must be specified");
     }
 
     private void loadPrivateKeyAndCertsFromKeyStore(PasswordRetriever passwordRetriever)
@@ -355,7 +395,7 @@ public class SignerParams {
                             + ". Wrong password?",
                     e);
         }
-        this.privateKey = key;
+        this.mKeyConfig = new KeyConfig.Jca(key);
         Certificate[] certChain = ks.getCertificateChain(keyAlias);
         if ((certChain == null) || (certChain.length == 0)) {
             throw new ParameterException(
@@ -397,6 +437,65 @@ public class SignerParams {
         }
     }
 
+    private PrivateKey loadPrivateKeyFromFile(String keyFile, PasswordRetriever passwordRetriever)
+            throws ParameterException, IOException, GeneralSecurityException {
+        if (keyFile == null) {
+            throw new ParameterException("Private key file (--key) must be specified");
+        }
+
+        byte[] privateKeyBlob = readFully(new File(keyFile));
+
+        PKCS8EncodedKeySpec keySpec;
+        // Potentially encrypted key blob
+        try {
+            EncryptedPrivateKeyInfo encryptedPrivateKeyInfo =
+                    new EncryptedPrivateKeyInfo(privateKeyBlob);
+
+            // The blob is indeed an encrypted private key blob
+            String passwordSpec =
+                    (keyPasswordSpec != null) ? keyPasswordSpec : PasswordRetriever.SPEC_STDIN;
+            Charset[] additionalPasswordEncodings =
+                    (passwordCharset != null) ? new Charset[] {passwordCharset} : new Charset[0];
+            List<char[]> keyPasswords =
+                    passwordRetriever.getPasswords(
+                            passwordSpec,
+                            "Private key password for " + name,
+                            additionalPasswordEncodings);
+            keySpec = decryptPkcs8EncodedKey(encryptedPrivateKeyInfo, keyPasswords);
+        } catch (IOException e) {
+            // The blob is not an encrypted private key blob
+            if (keyPasswordSpec == null) {
+                // Given that no password was specified, assume the blob is an unencrypted
+                // private key blob
+                keySpec = new PKCS8EncodedKeySpec(privateKeyBlob);
+            } else {
+                throw new InvalidKeySpecException(
+                        "Failed to parse encrypted private key blob " + keyFile, e);
+            }
+        }
+
+        // Load the private key from its PKCS #8 encoded form.
+        try {
+            return loadPkcs8EncodedPrivateKey(keySpec);
+        } catch (InvalidKeySpecException e) {
+            throw new InvalidKeySpecException(
+                    "Failed to load PKCS #8 encoded private key from " + keyFile, e);
+        }
+    }
+
+    private List<X509Certificate> loadCertsFromFile(String certFile)
+            throws ParameterException, IOException, CertificateException {
+        if (certFile == null) {
+            throw new ParameterException("Certificate file (--cert) must be specified");
+        }
+
+        try (FileInputStream in = new FileInputStream(certFile)) {
+            return X509CertificateUtils.generateCertificates(in).stream()
+                    .map(X509Certificate.class::cast)
+                    .collect(Collectors.toList());
+        }
+    }
+
     private static Key getKeyStoreKey(KeyStore ks, String keyAlias, List<char[]> passwords)
             throws UnrecoverableKeyException, NoSuchAlgorithmException, KeyStoreException {
         UnrecoverableKeyException lastFailure = null;
@@ -416,60 +515,8 @@ public class SignerParams {
 
     private void loadPrivateKeyAndCertsFromFiles(PasswordRetriever passwordRetriever)
             throws Exception {
-        if (keyFile == null) {
-            throw new ParameterException("Private key file (--key) must be specified");
-        }
-        if (certFile == null) {
-            throw new ParameterException("Certificate file (--cert) must be specified");
-        }
-        byte[] privateKeyBlob = readFully(new File(keyFile));
-
-        PKCS8EncodedKeySpec keySpec;
-        // Potentially encrypted key blob
-        try {
-            EncryptedPrivateKeyInfo encryptedPrivateKeyInfo =
-                    new EncryptedPrivateKeyInfo(privateKeyBlob);
-
-            // The blob is indeed an encrypted private key blob
-            String passwordSpec =
-                    (keyPasswordSpec != null) ? keyPasswordSpec : PasswordRetriever.SPEC_STDIN;
-            Charset[] additionalPasswordEncodings =
-                    (passwordCharset != null) ? new Charset[] {passwordCharset} : new Charset[0];
-            List<char[]> keyPasswords =
-                    passwordRetriever.getPasswords(
-                            passwordSpec, "Private key password for " + name,
-                            additionalPasswordEncodings);
-            keySpec = decryptPkcs8EncodedKey(encryptedPrivateKeyInfo, keyPasswords);
-        } catch (IOException e) {
-            // The blob is not an encrypted private key blob
-            if (keyPasswordSpec == null) {
-                // Given that no password was specified, assume the blob is an unencrypted
-                // private key blob
-                keySpec = new PKCS8EncodedKeySpec(privateKeyBlob);
-            } else {
-                throw new InvalidKeySpecException(
-                        "Failed to parse encrypted private key blob " + keyFile, e);
-            }
-        }
-
-        // Load the private key from its PKCS #8 encoded form.
-        try {
-            privateKey = loadPkcs8EncodedPrivateKey(keySpec);
-        } catch (InvalidKeySpecException e) {
-            throw new InvalidKeySpecException(
-                    "Failed to load PKCS #8 encoded private key from " + keyFile, e);
-        }
-
-        // Load certificates
-        Collection<? extends Certificate> certs;
-        try (FileInputStream in = new FileInputStream(certFile)) {
-            certs = X509CertificateUtils.generateCertificates(in);
-        }
-        List<X509Certificate> certList = new ArrayList<>(certs.size());
-        for (Certificate cert : certs) {
-            certList.add((X509Certificate) cert);
-        }
-        this.certs = certList;
+        this.certs = loadCertsFromFile(certFile);
+        this.mKeyConfig = new KeyConfig.Jca(loadPrivateKeyFromFile(keyFile, passwordRetriever));
     }
 
     private static PKCS8EncodedKeySpec decryptPkcs8EncodedKey(

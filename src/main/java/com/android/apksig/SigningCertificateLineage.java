@@ -441,7 +441,7 @@ public class SigningCertificateLineage {
         certificates.add(parent.getCertificate());
         ApkSigningBlockUtils.SignerConfig newSignerConfig =
                 new ApkSigningBlockUtils.SignerConfig();
-        newSignerConfig.privateKey = parent.getPrivateKey();
+        newSignerConfig.keyConfig = parent.getKeyConfig();
         newSignerConfig.certificates = certificates;
         newSignerConfig.signatureAlgorithms = Collections.singletonList(signatureAlgorithm);
 
@@ -1148,26 +1148,33 @@ public class SigningCertificateLineage {
     }
 
     /**
-     * Configuration of a signer.  Used to add a new entry to the {@link SigningCertificateLineage}
+     * Configuration of a signer. Used to add a new entry to the {@link SigningCertificateLineage}
      *
      * <p>Use {@link Builder} to obtain configuration instances.
      */
     public static class SignerConfig {
-        private final PrivateKey mPrivateKey;
+        private final KeyConfig mKeyConfig;
         private final X509Certificate mCertificate;
 
-        private SignerConfig(
-                PrivateKey privateKey,
-                X509Certificate certificate) {
-            mPrivateKey = privateKey;
+        private SignerConfig(KeyConfig keyConfig, X509Certificate certificate) {
+            mKeyConfig = keyConfig;
             mCertificate = certificate;
         }
 
         /**
          * Returns the signing key of this signer.
+         *
+         * @deprecated Use {@link #getKeyConfig()} instead of accessing a {@link PrivateKey}
+         *     directly. If the user of ApkSigner is signing with a KMS instead of JCA, this method
+         *     will return null.
          */
+        @Deprecated
         public PrivateKey getPrivateKey() {
-            return mPrivateKey;
+            return mKeyConfig.match(jca -> jca.privateKey, kms -> null);
+        }
+
+        public KeyConfig getKeyConfig() {
+            return mKeyConfig;
         }
 
         /**
@@ -1182,20 +1189,32 @@ public class SigningCertificateLineage {
          * Builder of {@link SignerConfig} instances.
          */
         public static class Builder {
-            private final PrivateKey mPrivateKey;
+            private final KeyConfig mKeyConfig;
             private final X509Certificate mCertificate;
 
             /**
              * Constructs a new {@code Builder}.
              *
+             * @deprecated use {@link #Builder(KeyConfig, X509Certificate)} instead
              * @param privateKey signing key
-             * @param certificate the X.509 certificate with a subject public key of the
-             * {@code privateKey}.
+             * @param certificate the X.509 certificate with a subject public key of the {@code
+             *     privateKey}.
              */
-            public Builder(
-                    PrivateKey privateKey,
-                    X509Certificate certificate) {
-                mPrivateKey = privateKey;
+            @Deprecated
+            public Builder(PrivateKey privateKey, X509Certificate certificate) {
+                mKeyConfig = new KeyConfig.Jca(privateKey);
+                mCertificate = certificate;
+            }
+
+            /**
+             * Constructs a new {@code Builder}.
+             *
+             * @param keyConfig signing key configuration
+             * @param certificate the X.509 certificate with a subject public key of the {@code
+             *     privateKey}.
+             */
+            public Builder(KeyConfig keyConfig, X509Certificate certificate) {
+                mKeyConfig = keyConfig;
                 mCertificate = certificate;
             }
 
@@ -1204,9 +1223,7 @@ public class SigningCertificateLineage {
              * this builder.
              */
             public SignerConfig build() {
-                return new SignerConfig(
-                        mPrivateKey,
-                        mCertificate);
+                return new SignerConfig(mKeyConfig, mCertificate);
             }
         }
     }

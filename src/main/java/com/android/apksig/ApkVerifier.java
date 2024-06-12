@@ -23,7 +23,6 @@ import static com.android.apksig.apk.ApkUtils.getTargetSdkVersionFromBinaryAndro
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31;
-import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_JAR_SIGNATURE_SCHEME;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_SOURCE_STAMP;
@@ -1036,10 +1035,13 @@ public class ApkVerifier {
         SigningCertificateLineage lineage = firstSignerInfo.mSigningCertificateLineage;
         if (lineage == null && firstSignerInfo.getCertificate() != null) {
             try {
-                lineage = new SigningCertificateLineage.Builder(
-                        new SignerConfig.Builder(
-                                /* privateKey= */ null, firstSignerInfo.getCertificate())
-                                .build()).build();
+                lineage =
+                        new SigningCertificateLineage.Builder(
+                                        new SignerConfig.Builder(
+                                                        /* keyConfig= */ (KeyConfig) null,
+                                                        firstSignerInfo.getCertificate())
+                                                .build())
+                                .build();
             } catch (Exception e) {
                 return null;
             }

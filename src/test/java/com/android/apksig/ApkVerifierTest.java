@@ -16,18 +16,20 @@
 
 package com.android.apksig;
 
-import static com.android.apksig.ApkSignerTest.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
-import static com.android.apksig.ApkSignerTest.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.ApkSignerTest.assertResultContainsSigners;
 import static com.android.apksig.ApkSignerTest.assertV31SignerTargetsMinApiLevel;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V3;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
+import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.junit.Assume.assumeNoException;
+import static org.junit.Assume.assumeTrue;
 
 import com.android.apksig.ApkVerifier.Issue;
 import com.android.apksig.ApkVerifier.IssueWithParams;
@@ -44,13 +46,6 @@ import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 
-import java.net.URISyntaxException;
-import java.nio.charset.StandardCharsets;
-import java.security.Provider;
-import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Map;
 import org.junit.Assume;
 import org.junit.Rule;
 import org.junit.Test;
@@ -61,18 +56,25 @@ import org.junit.runners.JUnit4;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.net.URISyntaxException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.Provider;
 import java.security.PublicKey;
 import java.security.Security;
 import java.security.Signature;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -1862,6 +1864,8 @@ public class ApkVerifierTest {
 
     @Test(expected = IOException.class)
     public void verify_largeFileSize_doesNotFailWithOOMError() throws Exception {
+        // TODO(b/319479290) make the test run with a specific max heap size
+        assumeTrue(Runtime.getRuntime().maxMemory() < 2016310387L); // 2gb
         // During V1 signature verification, each file needs to be uncompressed to calculate
         // its digest; the verifier uses the file size from the central directory record to
         // determine the size of the byte[] to allocate. If there is not sufficient memory
@@ -1869,6 +1873,12 @@ public class ApkVerifierTest {
         // instead of an OutOfMemoryError. This test uses an APK where the size of the
         // MANIFEST.MF is reported as 2016310387.
         verify("incorrect-manifest-size.apk");
+    }
+
+    @Test(expected = ApkFormatException.class)
+    public void verify_invalidApk_throwsApkFormatException() throws Exception {
+        // This is just some random bytes and thus an invalid manifest
+        verify("invalid_manifest.apk");
     }
 
     @Test

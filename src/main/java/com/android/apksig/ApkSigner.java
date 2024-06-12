@@ -306,7 +306,7 @@ public class ApkSigner {
                 DefaultApkSignerEngine.SignerConfig.Builder signerConfigBuilder =
                         new DefaultApkSignerEngine.SignerConfig.Builder(
                                 signerConfig.getName(),
-                                signerConfig.getPrivateKey(),
+                                signerConfig.getKeyConfig(),
                                 signerConfig.getCertificates(),
                                 signerConfig.getDeterministicDsaSigning());
                 int signerMinSdkVersion = signerConfig.getMinSdkVersion();
@@ -336,7 +336,7 @@ public class ApkSigner {
                 signerEngineBuilder.setStampSignerConfig(
                         new DefaultApkSignerEngine.SignerConfig.Builder(
                                         mSourceStampSignerConfig.getName(),
-                                        mSourceStampSignerConfig.getPrivateKey(),
+                                        mSourceStampSignerConfig.getKeyConfig(),
                                         mSourceStampSignerConfig.getCertificates(),
                                         mSourceStampSignerConfig.getDeterministicDsaSigning())
                                 .build());
@@ -1029,7 +1029,7 @@ public class ApkSigner {
      */
     public static class SignerConfig {
         private final String mName;
-        private final PrivateKey mPrivateKey;
+        private final KeyConfig mKeyConfig;
         private final List<X509Certificate> mCertificates;
         private final boolean mDeterministicDsaSigning;
         private final int mMinSdkVersion;
@@ -1037,7 +1037,7 @@ public class ApkSigner {
 
         private SignerConfig(Builder builder) {
             mName = builder.mName;
-            mPrivateKey = builder.mPrivateKey;
+            mKeyConfig = builder.mKeyConfig;
             mCertificates = Collections.unmodifiableList(new ArrayList<>(builder.mCertificates));
             mDeterministicDsaSigning = builder.mDeterministicDsaSigning;
             mMinSdkVersion = builder.mMinSdkVersion;
@@ -1049,9 +1049,20 @@ public class ApkSigner {
             return mName;
         }
 
-        /** Returns the signing key of this signer. */
+        /**
+         * Returns the signing key of this signer.
+         *
+         * @deprecated Use {@link #getKeyConfig()} instead of accessing a {@link PrivateKey}
+         *     directly. If the user of ApkSigner is signing with a KMS instead of JCA, this method
+         *     will return null.
+         */
+        @Deprecated
         public PrivateKey getPrivateKey() {
-            return mPrivateKey;
+            return mKeyConfig.match(jca -> jca.privateKey, kms -> null);
+        }
+
+        public KeyConfig getKeyConfig() {
+            return mKeyConfig;
         }
 
         /**
@@ -1082,7 +1093,7 @@ public class ApkSigner {
         /** Builder of {@link SignerConfig} instances. */
         public static class Builder {
             private final String mName;
-            private final PrivateKey mPrivateKey;
+            private final KeyConfig mKeyConfig;
             private final List<X509Certificate> mCertificates;
             private final boolean mDeterministicDsaSigning;
 
@@ -1092,22 +1103,22 @@ public class ApkSigner {
             /**
              * Constructs a new {@code Builder}.
              *
+             * @deprecated use {@link #Builder(String, KeyConfig, List)} instead
              * @param name signer's name. The name is reflected in the name of files comprising the
              *     JAR signature of the APK.
              * @param privateKey signing key
              * @param certificates list of one or more X.509 certificates. The subject public key of
              *     the first certificate must correspond to the {@code privateKey}.
              */
-            public Builder(
-                    String name,
-                    PrivateKey privateKey,
-                    List<X509Certificate> certificates) {
+            @Deprecated
+            public Builder(String name, PrivateKey privateKey, List<X509Certificate> certificates) {
                 this(name, privateKey, certificates, false);
             }
 
             /**
              * Constructs a new {@code Builder}.
              *
+             * @deprecated use {@link #Builder(String, KeyConfig, List, boolean)} instead
              * @param name signer's name. The name is reflected in the name of files comprising the
              *     JAR signature of the APK.
              * @param privateKey signing key
@@ -1116,6 +1127,7 @@ public class ApkSigner {
              * @param deterministicDsaSigning When signing using DSA, whether or not the
              *     deterministic variant (RFC6979) should be used.
              */
+            @Deprecated
             public Builder(
                     String name,
                     PrivateKey privateKey,
@@ -1125,7 +1137,45 @@ public class ApkSigner {
                     throw new IllegalArgumentException("Empty name");
                 }
                 mName = name;
-                mPrivateKey = privateKey;
+                mKeyConfig = new KeyConfig.Jca(privateKey);
+                mCertificates = new ArrayList<>(certificates);
+                mDeterministicDsaSigning = deterministicDsaSigning;
+            }
+
+            /**
+             * Constructs a new {@code Builder}.
+             *
+             * @param name signer's name. The name is reflected in the name of files comprising the
+             *     JAR signature of the APK.
+             * @param keyConfig signing key configuration
+             * @param certificates list of one or more X.509 certificates. The subject public key of
+             *     the first certificate must correspond to the {@code privateKey}.
+             */
+            public Builder(String name, KeyConfig keyConfig, List<X509Certificate> certificates) {
+                this(name, keyConfig, certificates, false);
+            }
+
+            /**
+             * Constructs a new {@code Builder}.
+             *
+             * @param name signer's name. The name is reflected in the name of files comprising the
+             *     JAR signature of the APK.
+             * @param keyConfig signing key configuration
+             * @param certificates list of one or more X.509 certificates. The subject public key of
+             *     the first certificate must correspond to the {@code privateKey}.
+             * @param deterministicDsaSigning When signing using DSA, whether or not the
+             *     deterministic variant (RFC6979) should be used.
+             */
+            public Builder(
+                    String name,
+                    KeyConfig keyConfig,
+                    List<X509Certificate> certificates,
+                    boolean deterministicDsaSigning) {
+                if (name.isEmpty()) {
+                    throw new IllegalArgumentException("Empty name");
+                }
+                mName = name;
+                mKeyConfig = keyConfig;
                 mCertificates = new ArrayList<>(certificates);
                 mDeterministicDsaSigning = deterministicDsaSigning;
             }

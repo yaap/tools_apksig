@@ -21,6 +21,8 @@ import static com.android.apksig.Constants.OID_RSA_ENCRYPTION;
 import static com.android.apksig.internal.pkcs7.AlgorithmIdentifier.getSignerInfoDigestAlgorithmOid;
 import static com.android.apksig.internal.pkcs7.AlgorithmIdentifier.getSignerInfoSignatureAlgorithm;
 
+import com.android.apksig.KeyConfig;
+import com.android.apksig.SignerEngineFactory;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
 import com.android.apksig.internal.asn1.Asn1EncodingException;
@@ -32,6 +34,7 @@ import com.android.apksig.internal.util.Pair;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.security.InvalidAlgorithmParameterException;
 import java.security.InvalidKeyException;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -78,12 +81,21 @@ public abstract class V1SchemeSigner {
         /** Name. */
         public String name;
 
-        /** Private key. */
+        /**
+         * Private key.
+         *
+         * @deprecated all internal usage has migrated to use {@link #keyConfig}. This field is not
+         *     removed so that compilation is not broken for clients referencing it, but using this
+         *     field may lead to unexpected errors.
+         */
         public PrivateKey privateKey;
+
+        /** Signing key configuration */
+        public KeyConfig keyConfig;
 
         /**
          * Certificates, with the first certificate containing the public key corresponding to
-         * {@link #privateKey}.
+         * {@link #keyConfig}.
          */
         public List<X509Certificate> certificates;
 
@@ -514,13 +526,13 @@ public abstract class V1SchemeSigner {
         // Generate the cryptographic signature of the signature file
         byte[] signatureBytes;
         try {
-            Signature signature = Signature.getInstance(jcaSignatureAlgorithm);
-            signature.initSign(signerConfig.privateKey);
-            signature.update(signatureFileBytes);
-            signatureBytes = signature.sign();
+            signatureBytes =
+                    SignerEngineFactory.getImplementation(
+                                    signerConfig.keyConfig, jcaSignatureAlgorithm, null)
+                            .sign(signatureFileBytes);
         } catch (InvalidKeyException e) {
             throw new InvalidKeyException("Failed to sign using " + jcaSignatureAlgorithm, e);
-        } catch (SignatureException e) {
+        } catch (InvalidAlgorithmParameterException | SignatureException e) {
             throw new SignatureException("Failed to sign using " + jcaSignatureAlgorithm, e);
         }
 

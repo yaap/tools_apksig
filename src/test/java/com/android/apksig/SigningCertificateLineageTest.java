@@ -16,6 +16,12 @@
 
 package com.android.apksig;
 
+import static com.android.apksig.internal.util.Resources.FIRST_RSA_1024_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.SECOND_RSA_1024_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.THIRD_RSA_2048_SIGNER_RESOURCE_NAME;
+
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
@@ -28,26 +34,26 @@ import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
 import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.apk.v3.V3SchemeSigner;
-import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.ByteBufferUtils;
 import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSource;
 
+import org.junit.Before;
+import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
 import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.security.cert.X509Certificate;
 import java.security.PrivateKey;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import org.junit.Before;
-import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class SigningCertificateLineageTest {
@@ -55,15 +61,6 @@ public class SigningCertificateLineageTest {
     // createLineageWithSignersFromResources and updateLineageWithSignerFromResources will add the
     // SignerConfig for the signers added to the Lineage to this list.
     private List<SignerConfig> mSigners;
-
-    // All signers with the same prefix and an _X suffix were signed with the private key of the
-    // (X-1) signer.
-    private static final String FIRST_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024";
-    private static final String SECOND_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024_2";
-
-    private static final String FIRST_RSA_2048_SIGNER_RESOURCE_NAME = "rsa-2048";
-    private static final String SECOND_RSA_2048_SIGNER_RESOURCE_NAME = "rsa-2048_2";
-    private static final String THIRD_RSA_2048_SIGNER_RESOURCE_NAME = "rsa-2048_3";
 
     @Before
     public void setUp() {
@@ -845,6 +842,7 @@ public class SigningCertificateLineageTest {
         assertFalse(SigningCertificateLineage.checkLineagesCompatibility(oldLineage, newLineage));
     }
 
+    @Test
     public void testMergeLineageWithTwoEqualLineagesReturnsMergedLineage() throws Exception {
         // The mergeLineageWith method is intended to merge two separate lineages into a superset
         // that spans both lineages. This method verifies if both lineages have the same signers,
@@ -1146,7 +1144,7 @@ public class SigningCertificateLineageTest {
                         resourcePrefix + ".pk8");
         X509Certificate cert = Resources.toCertificate(SigningCertificateLineageTest.class,
                 resourcePrefix + ".x509.pem");
-        return new SignerConfig.Builder(privateKey, cert).build();
+        return new SignerConfig.Builder(new KeyConfig.Jca(privateKey), cert).build();
     }
 
     private static DefaultApkSignerEngine.SignerConfig getApkSignerEngineSignerConfigFromResources(
@@ -1163,7 +1161,9 @@ public class SigningCertificateLineageTest {
         X509Certificate cert = Resources.toCertificate(SigningCertificateLineageTest.class,
                 resourcePrefix + ".x509.pem");
         DefaultApkSignerEngine.SignerConfig.Builder configBuilder =
-                new DefaultApkSignerEngine.SignerConfig.Builder(resourcePrefix, privateKey,
+                new DefaultApkSignerEngine.SignerConfig.Builder(
+                        resourcePrefix,
+                        new KeyConfig.Jca(privateKey),
                         Collections.singletonList(cert));
         if (minSdkVersion > 0) {
             configBuilder.setLineageForMinSdkVersion(lineage, minSdkVersion);

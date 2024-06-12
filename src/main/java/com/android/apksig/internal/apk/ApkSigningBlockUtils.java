@@ -22,6 +22,8 @@ import static com.android.apksig.internal.apk.ContentDigestAlgorithm.CHUNKED_SHA
 import static com.android.apksig.internal.apk.ContentDigestAlgorithm.VERITY_CHUNKED_SHA256;
 
 import com.android.apksig.ApkVerifier;
+import com.android.apksig.KeyConfig;
+import com.android.apksig.SignerEngineFactory;
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkUtils;
@@ -1144,15 +1146,15 @@ public class ApkSigningBlockUtils {
                     signatureAlgorithm.getJcaSignatureAlgorithmAndParams();
             String jcaSignatureAlgorithm = sigAlgAndParams.getFirst();
             AlgorithmParameterSpec jcaSignatureAlgorithmParams = sigAlgAndParams.getSecond();
+
             byte[] signatureBytes;
             try {
-                Signature signature = Signature.getInstance(jcaSignatureAlgorithm);
-                signature.initSign(signerConfig.privateKey);
-                if (jcaSignatureAlgorithmParams != null) {
-                    signature.setParameter(jcaSignatureAlgorithmParams);
-                }
-                signature.update(data);
-                signatureBytes = signature.sign();
+                signatureBytes =
+                        SignerEngineFactory.getImplementation(
+                                        signerConfig.keyConfig,
+                                        jcaSignatureAlgorithm,
+                                        jcaSignatureAlgorithmParams)
+                                .sign(data);
             } catch (InvalidKeyException e) {
                 throw new InvalidKeyException("Failed to sign using " + jcaSignatureAlgorithm, e);
             } catch (InvalidAlgorithmParameterException | SignatureException e) {
@@ -1250,16 +1252,23 @@ public class ApkSigningBlockUtils {
         return null;
     }
 
-    /**
-     * Signer configuration.
-     */
+    /** Signer configuration. */
     public static class SignerConfig {
-        /** Private key. */
-        public PrivateKey privateKey;
+        /**
+         * Private key.
+         *
+         * @deprecated all internal usage has migrated to use {@link #keyConfig}. This field is not
+         *     removed so that compilation is not broken for clients referencing it, but using this
+         *     field may lead to unexpected errors.
+         */
+        @Deprecated public PrivateKey privateKey;
+
+        /** Signing key config. */
+        public KeyConfig keyConfig;
 
         /**
          * Certificates, with the first certificate containing the public key corresponding to
-         * {@link #privateKey}.
+         * {@link #keyConfig}.
          */
         public List<X509Certificate> certificates;
 
