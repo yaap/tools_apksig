@@ -265,6 +265,12 @@ public class ApkSignerTool {
                 signerParams.setKeystoreProviderArg(
                         optionsParser.getRequiredValue(
                                 "JCA KeyStore Provider constructor argument"));
+            } else if ("kms-type".equals(optionName)) {
+                signerParams.setKmsType(
+                        optionsParser.getRequiredValue("Key Management Service (KMS) type"));
+            } else if ("kms-key-alias".equals(optionName)) {
+                signerParams.setKmsKeyAlias(
+                        optionsParser.getRequiredValue("Key Management Service (KMS) key alias"));
             } else if ("key".equals(optionName)) {
                 signerParams.setKeyFile(optionsParser.getRequiredValue("Private key file"));
             } else if ("cert".equals(optionName)) {
@@ -471,6 +477,8 @@ public class ApkSignerTool {
             } else {
                 v1SigBasename = keyFileName.substring(0, delimiterIndex);
             }
+        } else if (signer.getKmsKeyAlias() != null) {
+            v1SigBasename = signer.getKmsKeyAlias();
         } else {
             throw new RuntimeException("Neither KeyStore key alias nor private key file available");
         }
@@ -1068,6 +1076,10 @@ public class ApkSignerTool {
                 signerParams.setKeystoreProviderArg(
                         optionsParser.getRequiredValue(
                                 "JCA KeyStore Provider constructor argument"));
+            } else if ("kms-type".equals(optionName)) {
+                signerParams.setKmsType(optionsParser.getRequiredValue("KMS Type"));
+            } else if ("kms-key-alias".equals(optionName)) {
+                signerParams.setKmsKeyAlias(optionsParser.getRequiredValue("KMS Key Alias"));
             } else if ("key".equals(optionName)) {
                 signerParams.setKeyFile(optionsParser.getRequiredValue("Private key file"));
             } else if ("cert".equals(optionName)) {

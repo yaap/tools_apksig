@@ -35,9 +35,48 @@ license {
 
 java_library_host {
     name: "apksig",
-    srcs: [
-        "src/main/java/**/*.java",
+    srcs: ["src/main/java/**/*.java"],
+    exclude_srcs: [
+        "src/main/java/com/android/apksig/kms/aws/**/*.java",
+        "src/main/java/com/android/apksig/kms/gcp/**/*.java",
     ],
+    java_version: "1.8",
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+java_library_host {
+    name: "apksig-kms-provider-aws",
+    srcs: [
+        "src/main/java/com/android/apksig/kms/aws/**/*.java",
+    ],
+    libs: [
+        "apksig",
+        "awssdk-kms",
+        "awssdk-url-connection-client",
+    ],
+    services: ["src/providers/aws/*"],
+    java_version: "1.8",
+    target: {
+        windows: {
+            enabled: true,
+        },
+    },
+}
+
+java_library_host {
+    name: "apksig-kms-provider-gcp",
+    srcs: [
+        "src/main/java/com/android/apksig/kms/gcp/**/*.java",
+    ],
+    libs: [
+        "apksig",
+        "google-cloud-kms",
+    ],
+    services: ["src/providers/gcp/*"],
     java_version: "1.8",
     target: {
         windows: {
@@ -48,21 +87,26 @@ java_library_host {
 
 // apksigner command-line tool for signing APKs and verifying their signatures
 // ============================================================
-java_binary_host {
-    name: "apksigner",
+java_defaults {
+    name: "apksigner-defaults",
     srcs: ["src/apksigner/java/**/*.java"],
     java_resource_dirs: ["src/apksigner/java"],
-    wrapper: "etc/apksigner",
     manifest: "src/apksigner/apksigner.mf",
-    static_libs: [
-        "apksig",
-        "conscrypt-unbundled",
-    ],
+    static_libs: ["conscrypt-unbundled"],
     java_version: "1.8",
     target: {
         not_windows: {
             jni_libs: ["libconscrypt_openjdk_jni"],
         },
+    },
+}
+
+java_binary_host {
+    name: "apksigner",
+    defaults: ["apksigner-defaults"],
+    wrapper: "etc/apksigner",
+    static_libs: ["apksig"],
+    target: {
         windows: {
             enabled: true,
             wrapper: "etc/apksigner.bat",
@@ -70,14 +114,70 @@ java_binary_host {
     },
 }
 
+java_binary_host {
+    name: "apksigner-kms",
+    defaults: ["apksigner-defaults"],
+    wrapper: "etc/apksigner-kms",
+    static_libs: [
+        "apksig",
+        "apksig-kms-provider-aws",
+        "apksig-kms-provider-gcp",
+        "awssdk-kms",
+        "awssdk-url-connection-client",
+        "conscrypt-unbundled",
+        "google-api-java-client-assembly",
+        "google-auth-library-java-credentials",
+        "google-auth-library-java-oauth2_http",
+        "google-cloud-kms",
+        "grpc-java-api",
+        "grpc-java-auth",
+        "grpc-java-context",
+        "grpc-java-core",
+        "grpc-java-core-internal",
+        "grpc-java-core-util",
+        "grpc-java-netty-shaded",
+        "grpc-java-protobuf",
+        "grpc-java-protobuf-lite",
+        "grpc-java-stub",
+        "gson",
+        "guava",
+        "libprotobuf-java-util-full",
+        "opencensus-java-api",
+        "opencensus-java-contrib-grpc-metrics",
+        "opencensus-java-contrib-http-util",
+        "perfmark",
+        "slf4j-api",
+        "threetenbp",
+    ],
+    target: {
+        windows: {
+            enabled: true,
+            wrapper: "etc/apksigner-kms.bat",
+        },
+    },
+}
+
 java_test_host {
     name: "apksig-test",
     srcs: ["src/test/java/**/*.java"],
+    exclude_srcs: [
+        "src/test/java/com/android/apksig/kms/KeyWrapper.java",
+        "src/test/java/com/android/apksig/kms/aws/AwsTestData.java",
+        "src/test/java/com/android/apksig/kms/gcp/GcpTestData.java",
+    ],
     java_resource_dirs: ["src/test/resources"],
     static_libs: [
         "apksig",
+        "awssdk-kms",
+        "awssdk-url-connection-client",
         "bouncycastle-unbundled",
         "conscrypt-unbundled",
-        "junit"
-    ]
+        "google-api-java-client-assembly",
+        "google-auth-library-java-credentials",
+        "google-auth-library-java-oauth2_http",
+        "junit",
+        "google-cloud-kms",
+        "libprotobuf-java-util-full",
+        "slf4j-api",
+    ],
 }

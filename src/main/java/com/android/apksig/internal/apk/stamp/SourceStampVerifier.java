@@ -15,13 +15,13 @@
  */
 package com.android.apksig.internal.apk.stamp;
 
+import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtilsLite.getLengthPrefixedSlice;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtilsLite.getSignaturesToVerify;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtilsLite.readLengthPrefixedByteArray;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtilsLite.toHex;
 
 import com.android.apksig.ApkVerificationIssue;
-import com.android.apksig.Constants;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.internal.apk.ApkSignerInfo;
 import com.android.apksig.internal.apk.ApkSupportedSignature;
@@ -138,11 +138,12 @@ class SourceStampVerifier {
 
         for (Map.Entry<Integer, byte[]> signatureSchemeApkDigest :
                 signatureSchemeApkDigests.entrySet()) {
-            // TODO(b/192301300): Should the new v3.1 be included in the source stamp, or since a
-            // v3.0 block must always be present with a v3.1 block is it sufficient to just use the
-            // v3.0 block?
-            if (signatureSchemeApkDigest.getKey()
-                    == Constants.VERSION_APK_SIGNATURE_SCHEME_V31) {
+            // TODO(b/329101755): Once the source stamp is updated to include support for V3.1
+            // signatures, add verification of the content digests for this scheme.
+            if (signatureSchemeApkDigest.getKey() == VERSION_APK_SIGNATURE_SCHEME_V31) {
+                result.addInfoMessage(
+                        ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE,
+                        VERSION_APK_SIGNATURE_SCHEME_V31);
                 continue;
             }
             if (!signedSignatureSchemeData.containsKey(signatureSchemeApkDigest.getKey())) {

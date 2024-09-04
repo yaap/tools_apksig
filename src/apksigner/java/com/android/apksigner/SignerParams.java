@@ -16,13 +16,11 @@
 
 package com.android.apksigner;
 
-import static java.util.Arrays.stream;
 
 import com.android.apksig.KeyConfig;
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.SigningCertificateLineage.SignerCapabilities;
 import com.android.apksig.internal.util.X509CertificateUtils;
-import com.android.apksig.kms.KmsType;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
@@ -72,6 +70,8 @@ public class SignerParams {
 
     private String keyFile;
     private String certFile;
+    private String mKmsType;
+    private String mKmsKeyAlias;
 
     private String v1SigFileBasename;
 
@@ -137,6 +137,18 @@ public class SignerParams {
 
     public void setKeyFile(String keyFile) {
         this.keyFile = keyFile;
+    }
+
+    public void setKmsType(String mKmsType) {
+        this.mKmsType = mKmsType;
+    }
+
+    public String getKmsKeyAlias() {
+        return mKmsKeyAlias;
+    }
+
+    public void setKmsKeyAlias(String mKmsKeyAlias) {
+        this.mKmsKeyAlias = mKmsKeyAlias;
     }
 
     public void setCertFile(String certFile) {
@@ -205,23 +217,20 @@ public class SignerParams {
                 && (certFile == null)
                 && (v1SigFileBasename == null)
                 && (mKeyConfig == null)
-                && (certs == null);
+                && (certs == null)
+                && (mKmsType == null)
+                && (mKmsKeyAlias == null);
     }
 
     public void loadPrivateKeyAndCerts(PasswordRetriever passwordRetriever) throws Exception {
-        KmsType kmsType =
-                stream(KmsType.values())
-                        .filter(v -> v.toString().equalsIgnoreCase(keystoreType))
-                        .findFirst()
-                        .orElse(null);
-
-        if (kmsType != null) {
-            if (keystoreKeyAlias == null) {
+        if (mKmsType != null) {
+            if (mKmsKeyAlias == null) {
                 throw new ParameterException(
-                        "key alias (--ks-key-alias) is required if ks-type is a cloud KMS");
+                        "kms key alias (--kms-key-alias) is required if kms type (--kms-type) is"
+                                + " provided");
             }
             certs = loadCertsFromFile(certFile);
-            mKeyConfig = new KeyConfig.Kms(kmsType, keystoreKeyAlias);
+            mKeyConfig = new KeyConfig.Kms(mKmsType, mKmsKeyAlias);
             return;
         }
 
@@ -244,8 +253,8 @@ public class SignerParams {
         }
 
         throw new ParameterException(
-                "KeyStore (--ks), private key file (--key), or key alias and cloud provider"
-                        + " (--ks-key-alias and --ks-type) must be specified");
+                "KeyStore (--ks), private key file (--key), or KMS key alias and type"
+                        + " (--kms-key-alias and --kms-type) must be specified");
     }
 
     private void loadPrivateKeyAndCertsFromKeyStore(PasswordRetriever passwordRetriever)

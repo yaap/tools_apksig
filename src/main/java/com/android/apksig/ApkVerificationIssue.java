@@ -118,6 +118,11 @@ public class ApkVerificationIssue {
     public static final int JAR_SIG_PARSE_EXCEPTION = 37;
     /** The source stamp timestamp attribute has an invalid value. */
     public static final int SOURCE_STAMP_INVALID_TIMESTAMP = 38;
+    /**
+     * One or more digests for a signature scheme that is not in the source stamp were provided to
+     * the source stamp verifier.
+     */
+    public static final int SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE = 39;
 
     private final int mIssueId;
     private final String mFormat;

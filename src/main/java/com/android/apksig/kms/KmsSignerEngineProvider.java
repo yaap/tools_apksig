@@ -16,8 +16,19 @@
 
 package com.android.apksig.kms;
 
-/** Represents the supported Key Management Services. */
-public class KmsType {
-    public static String AWS = "aws";
-    public static String GCP = "gcp";
+import com.android.apksig.KeyConfig;
+import com.android.apksig.SignerEngine;
+
+import java.security.spec.AlgorithmParameterSpec;
+
+public interface KmsSignerEngineProvider {
+
+    /** Instantiates a concrete signer engine */
+    SignerEngine getInstance(
+            KeyConfig.Kms kmsConfig,
+            String jcaSignatureAlgorithm,
+            AlgorithmParameterSpec algorithmParameterSpec);
+
+    /** Which KMS provider this engine applies to */
+    String getKmsType();
 }

@@ -3338,6 +3338,15 @@ public class ApkVerifier {
                         + " timestamp attribute has an invalid value: %1$d"),
 
         /**
+         * A signature scheme version that is not in the source stamp was provided to the verifier.
+         * <ul>
+         *     <li>Parameter 1: An int value representing the signature scheme version.
+         * </ul>
+         */
+        SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE(
+                "No digests are available in the source stamp for signature scheme: %1$d"),
+
+        /**
          * The APK could not be properly parsed due to a ZIP or APK format exception.
          * <ul>
          *     <li>Parameter 1: The {@code Exception} caught when attempting to parse the APK.
@@ -3635,6 +3644,9 @@ public class ApkVerifier {
                     Issue.JAR_SIG_PARSE_EXCEPTION);
             sVerificationIssueIdToIssue.put(ApkVerificationIssue.SOURCE_STAMP_INVALID_TIMESTAMP,
                     Issue.SOURCE_STAMP_INVALID_TIMESTAMP);
+            sVerificationIssueIdToIssue.put(
+                    ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE,
+                    Issue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
         }
 
         /**

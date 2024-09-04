@@ -16,7 +16,6 @@
 
 package com.android.apksig;
 
-import com.android.apksig.kms.KmsType;
 
 import java.security.PrivateKey;
 import java.util.function.Function;
@@ -50,7 +49,7 @@ public abstract class KeyConfig {
 
     /** For signing via a Key Management Service (KMS). */
     public static class Kms extends KeyConfig {
-        public final KmsType kmsType;
+        public final String kmsType;
         public final String keyAlias;
 
         @Override
@@ -58,7 +57,7 @@ public abstract class KeyConfig {
             return kms.apply(this);
         }
 
-        public Kms(KmsType kmsType, String keyAlias) {
+        public Kms(String kmsType, String keyAlias) {
             this.kmsType = kmsType;
             this.keyAlias = keyAlias;
         }

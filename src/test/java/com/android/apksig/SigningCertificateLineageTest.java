@@ -20,6 +20,9 @@ import static com.android.apksig.internal.util.Resources.FIRST_RSA_1024_SIGNER_R
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_1024_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
+// BEGIN-AOSP
+import static com.android.apksig.internal.util.Resources.TEST_GCP_KEY_RING;
+// END-AOSP
 import static com.android.apksig.internal.util.Resources.THIRD_RSA_2048_SIGNER_RESOURCE_NAME;
 
 import static org.junit.Assert.assertEquals;
@@ -27,6 +30,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
+import static org.junit.Assume.assumeNoException;
 
 import com.android.apksig.SigningCertificateLineage.SignerCapabilities;
 import com.android.apksig.SigningCertificateLineage.SignerConfig;
@@ -36,6 +40,12 @@ import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.apk.v3.V3SchemeSigner;
 import com.android.apksig.internal.util.ByteBufferUtils;
 import com.android.apksig.internal.util.Resources;
+// BEGIN-AOSP
+import com.android.apksig.kms.aws.AwsSignerConfigGenerator;
+import com.android.apksig.kms.aws.KeyAliasClient;
+import com.android.apksig.kms.gcp.GcpSignerConfigGenerator;
+import com.android.apksig.kms.gcp.KeyRingClient;
+// END-AOSP
 import com.android.apksig.util.DataSource;
 
 import org.junit.Before;
@@ -273,6 +283,118 @@ public class SigningCertificateLineageTest {
         SignerCapabilities newSignerCapabilities = lineage.getSignerCapabilities(newSigner);
         assertExpectedCapabilityValues(newSignerCapabilities, newSignerCapabilityValues);
     }
+
+    // BEGIN-AOSP
+    @Test
+    public void
+            testRotationWithExitingLineageAndNonDefaultCapabilitiesForNewSigner_previousSignerAws()
+                    throws Exception {
+        try (KeyAliasClient client = new KeyAliasClient()) {
+            client.listKeyAliases();
+        } catch (Exception e) {
+            assumeNoException("Test cannot run without access to test data in AWS", e);
+        }
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        Resources.toLineageSignerConfig(
+                                getClass(), FIRST_RSA_2048_SIGNER_RESOURCE_NAME),
+                        AwsSignerConfigGenerator.getLineageSignerConfigFromResources(
+                                getClass(), SECOND_RSA_2048_SIGNER_RESOURCE_NAME));
+        SignerConfig oldSigner = mSigners.get(mSigners.size() - 1);
+        SignerConfig newSigner =
+                Resources.toLineageSignerConfig(getClass(), THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<Boolean> newSignerCapabilityValues = Arrays.asList(false, false, false, false, false);
+        lineage =
+                lineage.spawnDescendant(
+                        oldSigner, newSigner, buildSignerCapabilities(newSignerCapabilityValues));
+        SignerCapabilities newSignerCapabilities = lineage.getSignerCapabilities(newSigner);
+        assertExpectedCapabilityValues(newSignerCapabilities, newSignerCapabilityValues);
+    }
+    // END-AOSP
+
+    // BEGIN-AOSP
+    @Test
+    public void
+            testRotationWithExitingLineageAndNonDefaultCapabilitiesForNewSigner_originalSignerAws()
+                    throws Exception {
+        try (KeyAliasClient client = new KeyAliasClient()) {
+            client.listKeyAliases();
+        } catch (Exception e) {
+            assumeNoException("Test cannot run without access to test data in AWS", e);
+        }
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        AwsSignerConfigGenerator.getLineageSignerConfigFromResources(
+                                getClass(), FIRST_RSA_2048_SIGNER_RESOURCE_NAME),
+                        Resources.toLineageSignerConfig(
+                                getClass(), SECOND_RSA_1024_SIGNER_RESOURCE_NAME));
+        SignerConfig oldSigner = mSigners.get(mSigners.size() - 1);
+        SignerConfig newSigner =
+                Resources.toLineageSignerConfig(getClass(), THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<Boolean> newSignerCapabilityValues = Arrays.asList(false, false, false, false, false);
+        lineage =
+                lineage.spawnDescendant(
+                        oldSigner, newSigner, buildSignerCapabilities(newSignerCapabilityValues));
+        SignerCapabilities newSignerCapabilities = lineage.getSignerCapabilities(newSigner);
+        assertExpectedCapabilityValues(newSignerCapabilities, newSignerCapabilityValues);
+    }
+    // END-AOSP
+
+    // BEGIN-AOSP
+    @Test
+    public void
+            testRotationWithExitingLineageAndNonDefaultCapabilitiesForNewSigner_previousSignerGcp()
+                    throws Exception {
+        try (KeyRingClient keyRingClient = new KeyRingClient(TEST_GCP_KEY_RING)) {
+            keyRingClient.getKeyRing();
+        } catch (Exception e) {
+            assumeNoException("Test cannot run without access to test data in GCP", e);
+        }
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        Resources.toLineageSignerConfig(
+                                getClass(), FIRST_RSA_2048_SIGNER_RESOURCE_NAME),
+                        GcpSignerConfigGenerator.getLineageSignerConfigFromResources(
+                                getClass(), SECOND_RSA_2048_SIGNER_RESOURCE_NAME));
+        SignerConfig oldSigner = mSigners.get(mSigners.size() - 1);
+        SignerConfig newSigner =
+                Resources.toLineageSignerConfig(getClass(), THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<Boolean> newSignerCapabilityValues = Arrays.asList(false, false, false, false, false);
+        lineage =
+                lineage.spawnDescendant(
+                        oldSigner, newSigner, buildSignerCapabilities(newSignerCapabilityValues));
+        SignerCapabilities newSignerCapabilities = lineage.getSignerCapabilities(newSigner);
+        assertExpectedCapabilityValues(newSignerCapabilities, newSignerCapabilityValues);
+    }
+    // END-AOSP
+
+    // BEGIN-AOSP
+    @Test
+    public void
+            testRotationWithExitingLineageAndNonDefaultCapabilitiesForNewSigner_originalSignerGcp()
+                    throws Exception {
+        try (KeyRingClient keyRingClient = new KeyRingClient(TEST_GCP_KEY_RING)) {
+            keyRingClient.getKeyRing();
+        } catch (Exception e) {
+            assumeNoException("Test cannot run without access to test data in GCP", e);
+        }
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        GcpSignerConfigGenerator.getLineageSignerConfigFromResources(
+                                getClass(), FIRST_RSA_2048_SIGNER_RESOURCE_NAME),
+                        Resources.toLineageSignerConfig(
+                                getClass(), SECOND_RSA_1024_SIGNER_RESOURCE_NAME));
+        SignerConfig oldSigner = mSigners.get(mSigners.size() - 1);
+        SignerConfig newSigner =
+                Resources.toLineageSignerConfig(getClass(), THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+        List<Boolean> newSignerCapabilityValues = Arrays.asList(false, false, false, false, false);
+        lineage =
+                lineage.spawnDescendant(
+                        oldSigner, newSigner, buildSignerCapabilities(newSignerCapabilityValues));
+        SignerCapabilities newSignerCapabilities = lineage.getSignerCapabilities(newSigner);
+        assertExpectedCapabilityValues(newSignerCapabilities, newSignerCapabilityValues);
+    }
+    // END-AOSP
 
     @Test
     public void testRotationWithExitingLineageAndNonDefaultCapabilitiesForNewSigner()
@@ -970,18 +1092,18 @@ public class SigningCertificateLineageTest {
 
     /**
      * Verifies the specified {@code SigningCertificateLinage.SignerCapabilities} contains the
-     * expected values from the provided {@code List}. The {@code List} should contain
-     * {@code boolean} values to be verified against the
-     * {@code SigningCertificateLinage.SignerCapabilities} methods in the following order:
+     * expected values from the provided {@code List}. The {@code List} should contain {@code
+     * boolean} values to be verified against the {@code
+     * SigningCertificateLinage.SignerCapabilities} methods in the following order:
      *
-     *  {@mcode SigningCertificateLineage.SignerCapabilities.hasInstalledData}
-     *  {@mcode SigningCertificateLineage.SignerCapabilities.hasSharedUid}
-     *  {@mcode SigningCertificateLineage.SignerCapabilities.hasPermission}
-     *  {@mcode SigningCertificateLineage.SignerCapabilities.hasRollback}
-     *  {@mcode SigningCertificateLineage.SignerCapabilities.hasAuth}
+     * <p>{@mcode SigningCertificateLineage.SignerCapabilities.hasInstalledData} {@mcode
+     * SigningCertificateLineage.SignerCapabilities.hasSharedUid} {@mcode
+     * SigningCertificateLineage.SignerCapabilities.hasPermission} {@mcode
+     * SigningCertificateLineage.SignerCapabilities.hasRollback} {@mcode
+     * SigningCertificateLineage.SignerCapabilities.hasAuth}
      */
-    private void assertExpectedCapabilityValues(SignerCapabilities capabilities,
-            List<Boolean> expectedCapabilityValues) {
+    private void assertExpectedCapabilityValues(
+            SignerCapabilities capabilities, List<Boolean> expectedCapabilityValues) {
         assertTrue("The expectedCapabilityValues do not contain the expected number of elements",
                 expectedCapabilityValues.size() >= 5);
         assertEquals(
@@ -1013,6 +1135,20 @@ public class SigningCertificateLineageTest {
         mSigners.add(oldSignerConfig);
         SignerConfig newSignerConfig = Resources.toLineageSignerConfig(getClass(),
                 newSignerResourceName);
+        mSigners.add(newSignerConfig);
+        return new SigningCertificateLineage.Builder(oldSignerConfig, newSignerConfig).build();
+    }
+
+    /**
+     * Creates a new {@code SigningCertificateLineage} with the specified signers from the
+     * resources. {@code mSigners} will be updated with the {@code
+     * SigningCertificateLineage.SignerConfig} for each signer added to the lineage.
+     */
+    private SigningCertificateLineage createLineageWithSignersFromResources(
+            SigningCertificateLineage.SignerConfig oldSignerConfig,
+            SigningCertificateLineage.SignerConfig newSignerConfig)
+            throws Exception {
+        mSigners.add(oldSignerConfig);
         mSigners.add(newSignerConfig);
         return new SigningCertificateLineage.Builder(oldSignerConfig, newSignerConfig).build();
     }

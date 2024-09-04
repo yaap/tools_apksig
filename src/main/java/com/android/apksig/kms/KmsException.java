@@ -18,25 +18,25 @@ package com.android.apksig.kms;
 
 /** Represents an exception thrown by the external KMS. */
 public class KmsException extends RuntimeException {
-    private final KmsType mKmsType;
+    private final String mKmsType;
 
-    public KmsException(KmsType kmsType, String message) {
+    public KmsException(String kmsType, String message) {
         super(message);
         this.mKmsType = kmsType;
     }
 
-    public KmsException(KmsType kmsType, String message, Throwable cause) {
+    public KmsException(String kmsType, String message, Throwable cause) {
         super(message, cause);
         this.mKmsType = kmsType;
     }
 
-    public KmsException(KmsType kmsType, Throwable cause) {
+    public KmsException(String kmsType, Throwable cause) {
         super(cause);
         this.mKmsType = kmsType;
     }
 
     @Override
     public String getMessage() {
-        return "KMS " + mKmsType.toString() + " threw exception: " + super.getMessage();
+        return "KMS " + mKmsType + " threw exception: " + super.getMessage();
     }
 }

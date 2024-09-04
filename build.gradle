@@ -5,7 +5,8 @@ apply plugin: 'application'
 sourceCompatibility = '1.8'
 
 repositories {
-    jcenter()
+    mavenCentral()
+    google()
 }
 
 application {
@@ -29,8 +30,23 @@ tasks.register('createTestGoldens', JavaExec) {
     args = ["src/test/resources/com/android/apksig"]
 }
 
+tasks.register('createTestAwsData', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.android.apksig.kms.aws.AwsTestData'
+}
+
+tasks.register('createTestGcpData', JavaExec) {
+    classpath = sourceSets.test.runtimeClasspath
+    mainClass = 'com.android.apksig.kms.gcp.GcpTestData'
+}
+
 dependencies {
+    implementation 'com.google.cloud:google-cloud-kms:2.20.0'
     implementation 'org.conscrypt:conscrypt-openjdk-uber:2.5.2'
+    implementation 'software.amazon.awssdk:kms:2.23.18'
+    implementation 'software.amazon.awssdk:url-connection-client:2.24.7'
+    testImplementation 'com.google.crypto.tink:tink-android:1.12.0'
+    testImplementation 'com.google.protobuf:protobuf-java-util:3.25.3'
     testImplementation 'junit:junit:4.13'
     testImplementation 'org.bouncycastle:bcprov-jdk15on:1.68'
     testImplementation 'org.conscrypt:conscrypt-openjdk-uber:2.5.1'

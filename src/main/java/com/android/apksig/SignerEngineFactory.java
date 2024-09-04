@@ -16,9 +16,12 @@
 
 package com.android.apksig;
 
-import com.android.apksig.kms.KmsSignerEngine;
+import com.android.apksig.kms.KmsException;
+import com.android.apksig.kms.KmsSignerEngineProvider;
 
 import java.security.spec.AlgorithmParameterSpec;
+import java.util.Objects;
+import java.util.ServiceLoader;
 
 /** Simple util to fetch a signer engine based on provided config values. */
 public class SignerEngineFactory {
@@ -29,19 +32,35 @@ public class SignerEngineFactory {
      * KeyConfig.Kms}, signatureAlgorithm and signatureAlgorithmParameterSpec are ignored.
      *
      * @param keyConfig kms key type and alias, or a local private key.
-     * @param signatureAlgorithm required if keyConfig is {@link KeyConfig.Jca}, ignored if
-     *     keyConfig is {@link KeyConfig.Kms}.
-     * @param algorithmParameterSpec optional, ignored if keyConfig is {@link KeyConfig.Kms}.
+     * @param jcaSignatureAlgorithm which signature algorithm to use for signing.
+     * @param algorithmParameterSpec optional, any parameters needed by the signature alogrithm.
      * @return a concrete {@link SignerEngine} implementation.
      */
     public static SignerEngine getImplementation(
             KeyConfig keyConfig,
-            String signatureAlgorithm,
+            String jcaSignatureAlgorithm,
             AlgorithmParameterSpec algorithmParameterSpec) {
         return keyConfig.match(
                 jca ->
                         new JcaSignerEngine(
-                                jca.privateKey, signatureAlgorithm, algorithmParameterSpec),
-                KmsSignerEngine::fromKmsConfig);
+                                jca.privateKey, jcaSignatureAlgorithm, algorithmParameterSpec),
+                kms -> getKmsImplementation(kms, jcaSignatureAlgorithm, algorithmParameterSpec));
+    }
+
+    private static SignerEngine getKmsImplementation(
+            KeyConfig.Kms keyConfig,
+            String jcaSignatureAlgorithm,
+            AlgorithmParameterSpec algorithmParameterSpec) {
+        ServiceLoader<KmsSignerEngineProvider> providers =
+                ServiceLoader.load(KmsSignerEngineProvider.class);
+        for (KmsSignerEngineProvider provider : providers) {
+            if (Objects.equals(provider.getKmsType(), keyConfig.kmsType)) {
+                return provider.getInstance(
+                        keyConfig, jcaSignatureAlgorithm, algorithmParameterSpec);
+            }
+        }
+
+        throw new KmsException(
+                keyConfig.kmsType, "No SignerEngine implementation found on the classpath");
     }
 }

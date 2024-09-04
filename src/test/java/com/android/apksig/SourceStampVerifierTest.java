@@ -36,7 +36,10 @@ import org.junit.runners.JUnit4;
 
 import java.nio.ByteBuffer;
 import java.security.cert.X509Certificate;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @RunWith(JUnit4.class)
 public class SourceStampVerifierTest {
@@ -50,6 +53,8 @@ public class SourceStampVerifierTest {
             "6a8b96e278e58f62cfe3584022cec1d0527fcb85a9e5d2e1694eb0405be5b599";
     private static final String EC_P256_2_CERT_SHA256_DIGEST =
             "d78405f761ff6236cc9b570347a570aba0c62a129a3ac30c831c64d09ad95469";
+    private static final String EC_P256_3_CERT_SHA256_DIGEST =
+            "9369370ffcfdc1e92dae777252c05c483b8cbb55fa9d5fd9f6317f623ae6d8c6";
 
     @Test
     public void verifySourceStamp_correctSignature() throws Exception {
@@ -98,6 +103,140 @@ public class SourceStampVerifierTest {
         verificationResult = verifySourceStamp("v1v2v3-rotated-v3-key-valid-stamp.apk", 28, 28);
         assertVerified(verificationResult);
         assertSigningCertificates(verificationResult, null, null, EC_P256_2_CERT_SHA256_DIGEST);
+    }
+
+    @Test
+    public void verifySourceStamp_noV31Signers_v3SignerReturned() throws Exception {
+        // When querying an APK with an SDK range that supports the V3.1 signature scheme, the
+        // verifier should first check if the APK contains a V3.1 signer. If the APK does not
+        // contain a V3.1 signer, then the expected V3.0 signer should be returned.
+        Result verificationResult = verifySourceStamp("valid-stamp.apk", 33, 33);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, RSA_2048_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, (SignerInfoResult) null);
+    }
+
+    @Test
+    public void verifySourceStamp_oneV31SignerTargeting33_expectedTargetedSignerReturned()
+            throws Exception {
+        // The V3.1 signature scheme was added in SDK version 33; APKs signed with a rotated
+        // signing key will use the V3.1 signature scheme with the rotated signer targeting SDK
+        // version 33 by default. This test verifies the expected signer is returned based
+        // on the specified SDK range.
+        SignerInfoResult rotatedSigner = new SignerInfoResult(EC_P256_2_CERT_SHA256_DIGEST, 33,
+                Integer.MAX_VALUE);
+
+        Result verificationResult = verifySourceStamp("stamp-1-v31-tgt-33-signer.apk");
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, EC_P256_CERT_SHA256_DIGEST,
+                EC_P256_CERT_SHA256_DIGEST, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, rotatedSigner);
+        // This APK is stamped without the V3.1 content digests in the stamp, so it should return
+        // an informational message indicating this signature scheme is not available.
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+
+        verificationResult = verifySourceStamp("stamp-1-v31-tgt-33-signer.apk", 32, 32);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, (SignerInfoResult) null);
+
+        verificationResult = verifySourceStamp("stamp-1-v31-tgt-33-signer.apk", 33, 33);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, rotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+    }
+
+    @Test
+    public void verifySourceStamp_oneV31SignerTargeting34_expectedTargetedSignerReturned()
+            throws Exception {
+        // Support for the V3.1 signature scheme was added in SDK version 33, but a signer can
+        // target this or a later SDK version. This test verifies an APK with a V3.1 signer
+        // targeting SDK version 34 only returns that V3.1 signer when it's within the
+        // specified range.
+        SignerInfoResult rotatedSigner = new SignerInfoResult(EC_P256_2_CERT_SHA256_DIGEST, 34,
+                Integer.MAX_VALUE);
+
+        Result verificationResult = verifySourceStamp("stamp-1-v31-tgt-34-signer.apk");
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, EC_P256_CERT_SHA256_DIGEST,
+                EC_P256_CERT_SHA256_DIGEST, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, rotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+
+        verificationResult = verifySourceStamp("stamp-1-v31-tgt-34-signer.apk", 33, 33);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, (SignerInfoResult) null);
+
+        verificationResult = verifySourceStamp("stamp-1-v31-tgt-34-signer.apk", 34, 34);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, rotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+    }
+
+    @Test
+    public void verifySourceStamp_multipleV31Signers_expectedTargetedSignerReturned()
+            throws Exception {
+        // When the APK contains SDK targeted signing configs for the V3.1 signers, only the
+        // signer(s) targeting the specified range should be returned.
+        // The APK used for this test is signed with the V1-V3.1 signature schemes; there are two
+        // V3.1 signing configs, the first targeting SDK versions 33-34, and the second targeting
+        // versions 35+.
+        SignerInfoResult firstRotatedSigner = new SignerInfoResult(EC_P256_2_CERT_SHA256_DIGEST, 33,
+                34);
+        SignerInfoResult secondRotatedSigner = new SignerInfoResult(EC_P256_3_CERT_SHA256_DIGEST,
+                35, Integer.MAX_VALUE);
+
+        Result verificationResult = verifySourceStamp("stamp-2-v31-tgt-signers.apk");
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, EC_P256_CERT_SHA256_DIGEST,
+                EC_P256_CERT_SHA256_DIGEST, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, firstRotatedSigner, secondRotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+
+        verificationResult = verifySourceStamp("stamp-2-v31-tgt-signers.apk", 23, 32);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, EC_P256_CERT_SHA256_DIGEST,
+                EC_P256_CERT_SHA256_DIGEST, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, (SignerInfoResult) null);
+
+        // Even when the SDK range only requires the V3.1 signer for verification, the V3.0 signer
+        // should be returned since some stamps may not yet have the V3.1 signer included.
+        verificationResult = verifySourceStamp("stamp-2-v31-tgt-signers.apk", 34, 34);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, firstRotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+
+        verificationResult = verifySourceStamp("stamp-2-v31-tgt-signers.apk", 35, 35);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertV31Signers(verificationResult, secondRotatedSigner);
+        assertExpectedInfoMessage(verificationResult,
+                ApkVerificationIssue.SOURCE_STAMP_SIGNATURE_SCHEME_NOT_AVAILABLE);
+    }
+
+    @Test
+    public void verifySourceStamp_invalidV31Signer_v3SignerReturned() throws Exception {
+        // The stamp verifier was intended to be more lenient with errors when parsing the
+        // individual signature scheme blocks; if an error is encountered parsing the certificate
+        // for the V3.1 block, the verifier will still attempt to obtain the V3.0 signer and use
+        // this to verify the source stamp. If this is successful, then the verifier will return
+        // that the stamp was verified, and the result will contain a V3.1 signer instance with a
+        // warning for the malformed certificate.
+        Result verificationResult = verifySourceStamp("stamp-invalid-v31-signer.apk", 33, 33);
+        assertVerified(verificationResult);
+        assertSigningCertificates(verificationResult, null, null, EC_P256_CERT_SHA256_DIGEST);
+        assertSourceStampVerificationWarning(verificationResult,
+                ApkVerificationIssue.V3_SIG_MALFORMED_CERTIFICATE);
     }
 
     @Test
@@ -497,6 +636,16 @@ public class SourceStampVerifierTest {
     }
 
     /**
+     * Asserts the provided source stamp verification {@code result} contains an info message with
+     * the specified {@code infoMessageId}.
+     */
+    private static void assertExpectedInfoMessage(Result result, int infoMessageId) {
+        assertTrue(result.getSourceStampInfo().containsInfoMessages());
+        assertTrue(result.getSourceStampInfo().getInfoMessages().stream().anyMatch(
+                info -> info.getIssueId() == infoMessageId));
+    }
+
+    /**
      * Asserts that the provided {@code expectedCertDigests} match their respective signing
      * certificate digest in the specified {@code result}.
      *
@@ -547,6 +696,49 @@ public class SourceStampVerifierTest {
     }
 
     /**
+     * Asserts that the provided {@code expectedSignerInfos} were returned as V3.1 signers from
+     * the specified source stamp verification {@code result}.
+     *
+     * <p>A null value in the first index of the {@code expectedSignerInfos} indicates no V3.1
+     * signers are expected.
+     */
+    private static void assertV31Signers(Result result, SignerInfoResult... expectedSignerInfos)
+            throws Exception {
+        List<SignerInfo> signers = result.getV31SchemeSigners();
+        if (expectedSignerInfos[0] == null) {
+            assertEquals("No V3.1 signers expected", 0, signers.size());
+            return;
+        }
+        Map<String, SignerInfoResult> expectedSigners = Arrays.stream(expectedSignerInfos).collect(
+                Collectors.toMap(s -> s.certDigest, s -> s));
+        for (SignerInfo signer : signers) {
+            X509Certificate signingCert = signer.getSigningCertificate();
+            assertNotNull(signingCert);
+            String signingCertDigest = toHex(computeSha256DigestBytes(signingCert.getEncoded()));
+            SignerInfoResult expectedSigner = expectedSigners.remove(signingCertDigest);
+            assertNotNull(
+                    "An unexpected signer with cert digest " + signingCertDigest + " and SDK range "
+                            + signer.getMinSdkVersion() + "-" + signer.getMaxSdkVersion()
+                            + " was returned during stamp verification", expectedSigner);
+            assertEquals(expectedSigner.minSdkVersion, signer.getMinSdkVersion());
+            assertEquals(expectedSigner.maxSdkVersion, signer.getMaxSdkVersion());
+        }
+
+        // All of the expected signers should have been removed from the Map for each V3.1 signer
+        // returned from the stamp verification result. If any are left, report the missing
+        // expected signers.
+        StringBuilder errorMessage = new StringBuilder();
+        for (Map.Entry<String, SignerInfoResult> expectedSignerEntry : expectedSigners.entrySet()) {
+            errorMessage.append("Expected signer not found: ")
+                    .append(expectedSignerEntry.getValue())
+                    .append(System.getProperty("line.separator"));
+        }
+        if (errorMessage.length() > 0) {
+            fail(errorMessage.toString());
+        }
+    }
+
+    /**
      * Asserts that the provided {@code expectedCertDigests} match their respective certificate in
      * the source stamp's lineage with the oldest signer at element 0.
      *
@@ -562,6 +754,35 @@ public class SourceStampVerifierTest {
         for (int i = 0; i < expectedCertDigests.length; i++) {
             assertEquals("Stamp lineage mismatch at signer " + i, expectedCertDigests[i],
                     toHex(computeSha256DigestBytes(lineageCertificates.get(i).getEncoded())));
+        }
+    }
+
+    /**
+     * This class can be used to verify that a resulting {@link SignerInfo} matches the expected
+     * signer for the stamp under test.
+     */
+    // TODO(b/331297164): Replace this class with a record when the apksig Java version is updated
+    // to 14+.
+    private static class SignerInfoResult {
+        final String certDigest;
+        final int minSdkVersion;
+        final int maxSdkVersion;
+
+        /**
+         * Constructor that should be used for a V3.1 {@link SignerInfo} result to ensure the
+         * result matches the expected {@code certDigest} and the {@code minSdkVersion} to {@code
+         * maxSdkVersion} range.
+         */
+        SignerInfoResult(String certDigest, int minSdkVersion, int maxSdkVersion) {
+            this.certDigest = certDigest;
+            this.minSdkVersion = minSdkVersion;
+            this.maxSdkVersion = maxSdkVersion;
+        }
+
+        @Override
+        public String toString() {
+            return "certDigest: " + certDigest + ", minSdkVersion: " + minSdkVersion
+                    + ", maxSdkVersion: " + maxSdkVersion;
         }
     }
 }

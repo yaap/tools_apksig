@@ -18,10 +18,12 @@ package com.android.apksig;
 
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V3;
+import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.Constants.VERSION_JAR_SIGNATURE_SCHEME;
 import static com.android.apksig.apk.ApkUtilsLite.computeSha256DigestBytes;
 import static com.android.apksig.internal.apk.stamp.SourceStampConstants.SOURCE_STAMP_CERTIFICATE_HASH_ZIP_ENTRY_NAME;
 import static com.android.apksig.internal.apk.v1.V1SchemeConstants.MANIFEST_ENTRY_NAME;
+import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT;
 
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkUtilsLite;
@@ -212,6 +214,27 @@ public class SourceStampVerifier {
 
             Map<Integer, Map<ContentDigestAlgorithm, byte[]>> signatureSchemeApkContentDigests =
                     new HashMap<>();
+            if (mMaxSdkVersion >= MIN_SDK_WITH_V31_SUPPORT) {
+                SignatureInfo signatureInfo;
+                try {
+                    signatureInfo = ApkSigningBlockUtilsLite.findSignature(apk, zipSections,
+                            V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID);
+                } catch (SignatureNotFoundException e) {
+                    signatureInfo = null;
+                }
+                if (signatureInfo != null) {
+                    Map<ContentDigestAlgorithm, byte[]> apkContentDigests = new EnumMap<>(
+                            ContentDigestAlgorithm.class);
+                    parseSigners(signatureInfo.signatureBlock, VERSION_APK_SIGNATURE_SCHEME_V31,
+                            apkContentDigests, result);
+                    signatureSchemeApkContentDigests.put(
+                            VERSION_APK_SIGNATURE_SCHEME_V31, apkContentDigests);
+                }
+            }
+
+            // Even though the specified SDK version range may only require the V3.1 signature
+            // scheme, the V3.0 signer should also be included since it's possible the source
+            // stamp does not include the V3.1 signer.
             if (mMaxSdkVersion >= AndroidSdkVersion.P) {
                 SignatureInfo signatureInfo;
                 try {
@@ -285,7 +308,7 @@ public class SourceStampVerifier {
      * expected to be encountered on an Android platform version in the
      * {@code [minSdkVersion, maxSdkVersion]} range.
      */
-    public static void parseSigners(
+    public void parseSigners(
             ByteBuffer apkSignatureSchemeBlock,
             int apkSigSchemeVersion,
             Map<ContentDigestAlgorithm, byte[]> apkContentDigests,
@@ -315,11 +338,6 @@ public class SourceStampVerifier {
         }
         while (signers.hasRemaining()) {
             Result.SignerInfo signerInfo = new Result.SignerInfo();
-            if (isV2Block) {
-                result.addV2Signer(signerInfo);
-            } else {
-                result.addV3Signer(signerInfo);
-            }
             try {
                 ByteBuffer signer = ApkSigningBlockUtilsLite.getLengthPrefixedSlice(signers);
                 parseSigner(
@@ -333,6 +351,27 @@ public class SourceStampVerifier {
                         isV2Block ? ApkVerificationIssue.V2_SIG_MALFORMED_SIGNER
                                 : ApkVerificationIssue.V3_SIG_MALFORMED_SIGNER);
                 return;
+            } finally {
+                // Signers are added here to ensure that only V3.1 signers that target the specified
+                // range are included. This block will execute after either block above, so even
+                // in the case of a return, the error will be added to the SignerInfo and that
+                // signer can then be returned to the caller to see the cause of the failure.
+                switch (apkSigSchemeVersion) {
+                    case VERSION_APK_SIGNATURE_SCHEME_V2:
+                        result.addV2Signer(signerInfo);
+                        break;
+                    case VERSION_APK_SIGNATURE_SCHEME_V3:
+                        result.addV3Signer(signerInfo);
+                        break;
+                    case VERSION_APK_SIGNATURE_SCHEME_V31:
+                        // The V3.1 scheme supports SDK targeted signing configs; only add this
+                        // signer if it's within the verifier's SDK range.
+                        if (signerInfo.getMaxSdkVersion() >= mMinSdkVersion
+                                && signerInfo.getMinSdkVersion() <= mMaxSdkVersion) {
+                            result.addV31Signer(signerInfo);
+                        }
+                        break;
+                }
             }
         }
     }
@@ -349,7 +388,7 @@ public class SourceStampVerifier {
      * expected to be encountered on an Android platform version in the
      * {@code [minSdkVersion, maxSdkVersion]} range.
      */
-    private static void parseSigner(
+    private void parseSigner(
             ByteBuffer signerBlock,
             int apkSigSchemeVersion,
             CertificateFactory certFactory,
@@ -367,6 +406,22 @@ public class SourceStampVerifier {
         ByteBuffer signedData = ApkSigningBlockUtilsLite.getLengthPrefixedSlice(signerBlock);
         ByteBuffer digests = ApkSigningBlockUtilsLite.getLengthPrefixedSlice(signedData);
         ByteBuffer certificates = ApkSigningBlockUtilsLite.getLengthPrefixedSlice(signedData);
+        if (apkSigSchemeVersion == VERSION_APK_SIGNATURE_SCHEME_V31) {
+            // A V3+ signer block contains the following additional fields; while these were
+            // never verified with the V3.0 signature scheme, they are used for SDK targeted
+            // signing configs with the V3.1 scheme:
+            //   * uint32: minSdkVersion
+            //   * uint32: maxSdkVersion
+            int minSdkVersion = signedData.getInt();
+            int maxSdkVersion = signedData.getInt();
+            signerInfo.setMinSdkVersion(minSdkVersion);
+            signerInfo.setMaxSdkVersion(maxSdkVersion);
+            // If the current signer falls outside the SDK range for the verifier, return now before
+            // adding any content digests to the resulting Map.
+            if (maxSdkVersion < mMinSdkVersion || signerInfo.getMinSdkVersion() > mMaxSdkVersion) {
+                return;
+            }
+        }
 
         // Parse the digests block
         while (digests.hasRemaining()) {
@@ -506,8 +561,9 @@ public class SourceStampVerifier {
         private final List<SignerInfo> mV1SchemeSigners = new ArrayList<>();
         private final List<SignerInfo> mV2SchemeSigners = new ArrayList<>();
         private final List<SignerInfo> mV3SchemeSigners = new ArrayList<>();
+        private final List<SignerInfo> mV31SchemeSigners = new ArrayList<>();
         private final List<List<SignerInfo>> mAllSchemeSigners = Arrays.asList(mV1SchemeSigners,
-                mV2SchemeSigners, mV3SchemeSigners);
+                mV2SchemeSigners, mV3SchemeSigners, mV31SchemeSigners);
         private SourceStampInfo mSourceStampInfo;
 
         private final List<ApkVerificationIssue> mErrors = new ArrayList<>();
@@ -533,6 +589,10 @@ public class SourceStampVerifier {
 
         private void addV3Signer(SignerInfo signerInfo) {
             mV3SchemeSigners.add(signerInfo);
+        }
+
+        private void addV31Signer(SignerInfo signerInfo) {
+            mV31SchemeSigners.add(signerInfo);
         }
 
         /**
@@ -579,6 +639,14 @@ public class SourceStampVerifier {
          */
         public List<SignerInfo> getV3SchemeSigners() {
             return mV3SchemeSigners;
+        }
+
+        /**
+         * Returns a {@code List} of {@link SignerInfo} objects representing the V3.1 signers of
+         * the provided APK.
+         */
+        public List<SignerInfo> getV31SchemeSigners() {
+            return mV31SchemeSigners;
         }
 
         /**
@@ -671,9 +739,16 @@ public class SourceStampVerifier {
          * corresponding signature block.
          */
         public static class SignerInfo {
+            /**
+             * Value for the min and max SDK versions when the value could not be parsed or is not
+             * applicable; only the V3.1 signature scheme includes these fields.
+             */
+            public static final int INVALID_SDK_VERSION = -1;
             private X509Certificate mSigningCertificate;
             private final List<ApkVerificationIssue> mErrors = new ArrayList<>();
             private final List<ApkVerificationIssue> mWarnings = new ArrayList<>();
+            private int mMinSdkVersion = INVALID_SDK_VERSION;
+            private int mMaxSdkVersion = INVALID_SDK_VERSION;
 
             void setSigningCertificate(X509Certificate signingCertificate) {
                 mSigningCertificate = signingCertificate;
@@ -685,6 +760,14 @@ public class SourceStampVerifier {
 
             void addVerificationWarning(int warningId, Object... params) {
                 mWarnings.add(new ApkVerificationIssue(warningId, params));
+            }
+
+            void setMinSdkVersion(int minSdkVersion) {
+                mMinSdkVersion = minSdkVersion;
+            }
+
+            void setMaxSdkVersion(int maxSdkVersion) {
+                mMaxSdkVersion = maxSdkVersion;
             }
 
             /**
@@ -716,6 +799,24 @@ public class SourceStampVerifier {
              */
             public boolean containsErrors() {
                 return !mErrors.isEmpty();
+            }
+
+            /**
+             * Returns the minSdkVersion for this signer or {@link #INVALID_SDK_VERSION} if the
+             * field is not available. This value is only applicable to V3.1 signers as this is the
+             * only signature scheme that supports SDK targeted signing configs.
+             */
+            public int getMinSdkVersion() {
+                return mMinSdkVersion;
+            }
+
+            /**
+             * Returns the maxSdkVersion for this signer or {@link #INVALID_SDK_VERSION} if the
+             * field is not available. This value is only applicable to V3.1 signers as this is the
+             * only signature scheme that supports SDK targeted signing configs.
+             */
+            public int getMaxSdkVersion() {
+                return mMaxSdkVersion;
             }
         }
 
