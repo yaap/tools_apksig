@@ -353,6 +353,10 @@ public abstract class ApkUtils {
      * @throws CodenameMinSdkVersionException if the {@code codename} is not supported
      */
     static int getMinSdkVersionForCodename(String codename) throws CodenameMinSdkVersionException {
+        if ("Baklava".equals(codename)) {
+            return 34; // VIC (35) was the version before Baklava, return VIC version minus one
+        }
+
         char firstChar = codename.isEmpty() ? ' ' : codename.charAt(0);
         // Codenames are case-sensitive. Only codenames starting with A-Z are supported for now.
         // We only look at the first letter of the codename as this is the most important letter.
@@ -373,7 +377,7 @@ public abstract class ApkUtils {
             // element at insertionIndex (if present) is greater than firstChar.
             int insertionIndex = -1 - searchResult; // insertionIndex is in [0; array length]
             if (insertionIndex == 0) {
-                // 'A' or 'B' -- never released to public
+                // 'A' or 'B' (not Baklava) -- never released to public
                 return 1;
             } else {
                 // The element at insertionIndex - 1 is the newest older codename.
