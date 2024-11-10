@@ -943,7 +943,13 @@ public class ApkSigningBlockUtils {
             int blockId = apkSigningBlockBuffer.getInt();
             // Since the block ID has already been read from the signature block read the next
             // blockLength - 4 bytes as the value.
-            byte[] blockValue = new byte[(int) blockLength - 4];
+            byte[] blockValue = null;
+            try {
+                blockValue = new byte[(int) blockLength - 4];
+            } catch (OutOfMemoryError e) {
+                throw new IOException(
+                        "Signature block with ID " + blockId + " is too large: " + blockLength, e);
+            }
             apkSigningBlockBuffer.get(blockValue);
             signatureBlocks.add(Pair.of(blockValue, blockId));
         }
