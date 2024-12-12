@@ -60,6 +60,11 @@ public final class Resources {
     public static final String FIRST_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024";
     public static final String SECOND_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024_2";
 
+    // This resource uses a PEM certificate file containing the certificate chain with both the
+    // first and second RSA-2048 signers. This resource should be used for any tests that require
+    // a certificate chain in the SignerConfig.
+    public static final String FIRST_AND_SECOND_RSA_2048_SIGNER_RESOURCE_NAME = "rsa-2048-2-1";
+
     public static final String FIRST_RSA_4096_SIGNER_RESOURCE_NAME = "rsa-4096";
 
     public static final String EC_P256_SIGNER_RESOURCE_NAME = "ec-p256";

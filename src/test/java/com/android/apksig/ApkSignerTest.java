@@ -25,6 +25,7 @@ import static com.android.apksig.apk.ApkUtils.SOURCE_STAMP_CERTIFICATE_HASH_ZIP_
 import static com.android.apksig.apk.ApkUtils.findZipSections;
 import static com.android.apksig.internal.util.Resources.EC_P256_2_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.EC_P256_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.FIRST_AND_SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_CERT_WITH_NEGATIVE_MODULUS;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_4096_SIGNER_RESOURCE_NAME;
@@ -3434,6 +3435,34 @@ public class ApkSignerTest {
 
         assertResultContainsV4Signers(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
                 FIRST_RSA_4096_SIGNER_RESOURCE_NAME);
+    }
+
+    @Test
+    public void testV4_certificateChainInSignerConfig_v4UsesCurrentSigner() throws Exception {
+        // The APK SignerConfig supports a certificate chain as input; this chain represents the
+        // current signing certificate, the previous issuer of this certificate, and any previous
+        // issuers back to the root. As long as the current signer for the SignerConfig is
+        // specified as the first certificate, all of the certificates in the chain should be
+        // stored in the length-prefixed sequence of X.509 certificates. To remain consistent
+        // with SigningConfigs for previous signature schemes, the V4 signature scheme should also
+        // accept SigningConfigs with a certificate chain; while the entire chain will not be
+        // stored in the V4 signature, this will allow SignerConfig instances with certificate
+        // chains to be used across all signature schemes. For more details about the certificate
+        // chain in the V3 signature block, see
+        // https://source.android.com/docs/security/features/apksigning/v3#format
+        List<ApkSigner.SignerConfig> rsa2048SignerConfig = Arrays.asList(
+                getDefaultSignerConfigFromResources(
+                        FIRST_AND_SECOND_RSA_2048_SIGNER_RESOURCE_NAME));
+
+        File signedApk = sign("original.apk",
+                new ApkSigner.Builder(rsa2048SignerConfig)
+                        .setV1SigningEnabled(true)
+                        .setV2SigningEnabled(true)
+                        .setV3SigningEnabled(true)
+                        .setV4SigningEnabled(true));
+        ApkVerifier.Result result = verify(signedApk, null);
+
+        assertResultContainsV4Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
     }
 
     @Test

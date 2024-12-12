@@ -180,9 +180,6 @@ public abstract class V4SchemeSigner {
         if (signerConfig.certificates.isEmpty()) {
             throw new SignatureException("No certificates configured for signer");
         }
-        if (signerConfig.certificates.size() != 1) {
-            throw new CertificateEncodingException("Should only have one certificate");
-        }
 
         // Collecting data for signing.
         final PublicKey publicKey = signerConfig.certificates.get(0).getPublicKey();

@@ -680,6 +680,10 @@ public class ApkSignerTool {
                             verbose, printCertsPem);
                 }
             }
+            if (sourceStampInfo != null && verbose) {
+                System.out.println(
+                        "Source Stamp Timestamp: " + sourceStampInfo.getTimestampEpochSeconds());
+            }
         } else {
             System.err.println("DOES NOT VERIFY");
         }
