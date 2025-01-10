@@ -53,7 +53,13 @@ public abstract class ZipUtils {
     private static final int ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET = 16;
     private static final int ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET = 20;
 
-    private static final int UINT16_MAX_VALUE = 0xffff;
+    public static final int ZIP64_RECORD_ID = 0x1;
+    public static final String ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME = "uncompressedSize";
+    public static final String ZIP64_COMPRESSED_SIZE_FIELD_NAME = "compressedSize";
+    public static final String ZIP64_LFH_OFFSET_FIELD_NAME = "localFileHeaderOffset";
+
+    public static final int UINT16_MAX_VALUE = 0xffff;
+    public static final long UINT32_MAX_VALUE = 0xffffffffL;
 
     /**
      * Sets the offset of the start of the ZIP Central Directory in the archive.
@@ -253,6 +259,104 @@ public abstract class ZipUtils {
         return -1;
     }
 
+    /**
+     * Parses the provided extra field for the ZIP64 block and sets the fields in the provided
+     * {@code zip64Fields} that were affected by the 32-bit limit.
+     *
+     * <p>Since the ZIP64 block only includes those fields that exceed the limit, the specified
+     * {@code zip64Fields} is used to determine which fields should be read and updated from the
+     * ZIP64 block.
+     */
+    static void parseExtraField(ByteBuffer extra, Zip64Fields zip64Fields)
+            throws ZipFormatException {
+        extra.order(ByteOrder.LITTLE_ENDIAN);
+        // Each record within the extra field must contain at least a UINT16 headerId and size
+        // FORMAT:
+        // * uint16: headerId
+        // * uint16: size
+        //   * Payload of the specified size
+        while (extra.remaining() > 4) {
+            int headerId = getUnsignedInt16(extra);
+            int extraRecordSize = getUnsignedInt16(extra);
+            if (extraRecordSize > extra.remaining()) {
+                throw new ZipFormatException(
+                        "Extra field record with ID "
+                                + Long.toHexString(headerId)
+                                + " exceeds size of field; size of block: "
+                                + extraRecordSize
+                                + ", remaining extra buffer: "
+                                + extra.remaining());
+            }
+            if (headerId == ZIP64_RECORD_ID) {
+                // Each field in the ZIP64 record only exists if the corresponding field in the
+                // local file header / central directory with the UINT32 max value; the fields must
+                // always be in the order uncompressedSize, compressedSize, and
+                // localFileHeaderOffset, where applicable.
+                // ZIP64 FORMAT:
+                // * uint64: uncompressed size (if the base uncompressed value is 0xffffffff)
+                // * uint64: compressed size (if the base compressed value is 0xffffffff)
+                // * uint64: local file header offset (if the base LFH offset value is 0xffffffff)
+                if (zip64Fields.uncompressedSize == UINT32_MAX_VALUE) {
+                    if (extraRecordSize >= 8) {
+                        zip64Fields.uncompressedSize = extra.getLong();
+                        extraRecordSize -= 8;
+                    } else {
+                        throw new ZipFormatException(
+                                "Expected an uncompressed size value in the ZIP64 record, "
+                                        + "remaining size of record: "
+                                        + extraRecordSize);
+                    }
+                }
+                if (zip64Fields.compressedSize == UINT32_MAX_VALUE) {
+                    if (extraRecordSize >= 8) {
+                        zip64Fields.compressedSize = extra.getLong();
+                        extraRecordSize -= 8;
+                    } else {
+                        throw new ZipFormatException(
+                                "Expected a compressed size value in the ZIP64 record, "
+                                        + "remaining size of record: "
+                                        + extraRecordSize);
+                    }
+                }
+                if (zip64Fields.localFileHeaderOffset == UINT32_MAX_VALUE) {
+                    if (extraRecordSize >= 8) {
+                        zip64Fields.localFileHeaderOffset = extra.getLong();
+                    } else {
+                        throw new ZipFormatException(
+                                "Expected a LFH offset in the ZIP64 record, "
+                                        + "remaining size of record: "
+                                        + extraRecordSize);
+                    }
+                }
+                // Once the ZIP64 record is found, no further parsing is required.
+                break;
+            } else {
+                // Skip over the unexpected record and check subsequent records.
+                extra.position(extra.position() + extraRecordSize);
+            }
+        }
+    }
+
+    /**
+     * Checks whether the provided {@code headerValue} from the LFH / CD Record exceeds the 32-bit
+     * limit and must be obtained from the Zip64 record; if so, then the specified {@code
+     * zip64Value} is verified and returned to the caller.
+     */
+    static long checkAndReturnZip64Value(
+            long headerValue, long zip64Value, String name, String fieldName)
+            throws ZipFormatException {
+        // If the value in the header does not indicate that the value exceeds the 32-bit
+        // limitation and must be in the Zip64 record, then return the provided value.
+        if (headerValue != UINT32_MAX_VALUE) {
+            return headerValue;
+        }
+        if (zip64Value == UINT32_MAX_VALUE) {
+            throw new ZipFormatException(
+                    "Unable to obtain ZIP64 " + fieldName + " field for record: " + name);
+        }
+        return zip64Value;
+    }
+
     static void assertByteOrderLittleEndian(ByteBuffer buffer) {
         if (buffer.order() != ByteOrder.LITTLE_ENDIAN) {
             throw new IllegalArgumentException("ByteBuffer byte order must be little endian");
@@ -380,6 +484,29 @@ public abstract class ZipUtils {
             this.inputSizeBytes = inputSizeBytes;
             this.inputCrc32 = inputCrc32;
             this.output = output;
+        }
+    }
+
+    /**
+     * Class containing the file header / central directory fields that can be affected by the 32-
+     * bit limit. In the case that any of these fields exceed this limit, the value will be set to
+     * 0xffffffff, and the value can be found in the extra field. This class can be used with {@link
+     * #parseExtraField(ByteBuffer, Zip64Fields)} to obtain the corresponding values for each
+     * affected field.
+     */
+    static class Zip64Fields {
+        public long uncompressedSize;
+        public long compressedSize;
+        public long localFileHeaderOffset;
+
+        Zip64Fields(long uncompressedSize, long compressedSize) {
+            this(uncompressedSize, compressedSize, -1);
+        }
+
+        Zip64Fields(long uncompressedSize, long compressedSize, long localFileHeaderOffset) {
+            this.uncompressedSize = uncompressedSize;
+            this.compressedSize = compressedSize;
+            this.localFileHeaderOffset = localFileHeaderOffset;
         }
     }
 }
