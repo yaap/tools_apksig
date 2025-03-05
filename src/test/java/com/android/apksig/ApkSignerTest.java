@@ -2030,6 +2030,31 @@ public class ApkSignerTest {
     }
 
     @Test
+    public void testOtherSignersSignaturesPreserved_v2BlockSizeLargerThanHeap_throwsException()
+            throws Exception {
+        // TODO(b/319479290) make the test run with a specific max heap size
+        assumeTrue(Runtime.getRuntime().maxMemory() < 2147483647L);
+        // When a V2 signature is appended to an existing signature, the bytes of the existing
+        // block have to be obtained to create a new signature block with the requested signature
+        // appended. If the existing signature block is larger than the heap size, then an
+        // OutOfMemory error will be thrown when attempting to allocate the byte array for the
+        // block. This test uses a modified APK with a nearly 2GB signature block length to verify
+        // that the OutOfMemory error is handled when allocating the array and an
+        // IllegalArgumentException is thrown instead.
+        List<ApkSigner.SignerConfig> ecP256SignerConfig = Collections.singletonList(
+                getDefaultSignerConfigFromResources(EC_P256_SIGNER_RESOURCE_NAME));
+
+        assertThrows(IllegalArgumentException.class, () ->
+                sign("incorrect-v2-block-size.apk",
+                        new ApkSigner.Builder(ecP256SignerConfig)
+                                .setV1SigningEnabled(true)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(false)
+                                .setV4SigningEnabled(false)
+                                .setOtherSignersSignaturesPreserved(true)));
+    }
+
+    @Test
     public void testSetMinSdkVersionForRotation_lessThanT_noV31Block() throws Exception {
         // The V3.1 signing block is intended to allow APK signing key rotation to target T+, but
         // a minimum SDK version can be explicitly set for rotation; if it is less than T than

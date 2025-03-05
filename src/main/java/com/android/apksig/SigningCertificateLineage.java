@@ -942,10 +942,6 @@ public class SigningCertificateLineage {
 
         private final int mCallerConfiguredFlags;
 
-        private SignerCapabilities(int flags) {
-            this(flags, 0);
-        }
-
         private SignerCapabilities(int flags, int callerConfiguredFlags) {
             mFlags = flags;
             mCallerConfiguredFlags = callerConfiguredFlags;

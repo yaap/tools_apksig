@@ -185,5 +185,5 @@ $ apksigner lineage --in /path/to/existing/lineage --out /path/to/new/file \
     --set-auth false
 
 2. Display details about the signing certificates and their capabilities in the lineage:
-$ apksigner lineage --in /path/to/existing/lineage --print-certs -v
+$ apksigner lineage --in /path/to/existing/lineage_or_apk --print-certs -v
 

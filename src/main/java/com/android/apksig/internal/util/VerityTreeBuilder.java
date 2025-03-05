@@ -28,13 +28,11 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-
 import java.util.ArrayList;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Phaser;
 import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 /**
  * VerityTreeBuilder is used to generate the root hash of verity tree built from the input file.
@@ -60,10 +58,6 @@ public class VerityTreeBuilder implements AutoCloseable {
      * Typical prefetch size.
      */
     private final static int MAX_PREFETCH_CHUNKS = 1024;
-    /**
-     * Minimum chunks to be processed by a single worker task.
-     */
-    private final static int MIN_CHUNKS_PER_WORKER = 8;
 
     /**
      * Digest algorithm (JCA Digest algorithm name) used in the tree.
