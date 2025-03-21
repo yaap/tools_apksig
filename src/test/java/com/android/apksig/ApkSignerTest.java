@@ -1866,6 +1866,33 @@ public class ApkSignerTest {
     }
 
     @Test
+    public void testSignApk_apkWithZip64Records_signsAndVerifiesSuccessfully() throws Exception {
+        // When any of the fields in the Local File Header or Central Directory Record exceed
+        // the value that can be stored in 32-bits, then the value is written as 0xffffffff and
+        // the actual value is written to the Zip64 record within the extra field of the current
+        // block; for APKs, these fields are uncompressed size, compressed size, and local file
+        // header offset. This test uses an APK with assets records that have been modified to
+        // write the 0xffffffff values for combinations of these fields in both the local file
+        // header as well as the central directory record; the actual size of these fields is then
+        // written in the corresponding field in the Zip64 record. During signing, all of these
+        // fields need to be read and preserved when writing the records back to the APK.
+        List<ApkSigner.SignerConfig> rsa2048SignerConfig =
+                Collections.singletonList(
+                        getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME));
+
+        File signedApk =
+                sign(
+                        "v1v2v3-with-zip64-records.apk",
+                        new ApkSigner.Builder(rsa2048SignerConfig)
+                                .setV1SigningEnabled(true)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(true));
+
+        ApkVerifier.Result result = verify(signedApk, null);
+        assertVerified(result);
+    }
+
+    @Test
     public void testOtherSignersSignaturesPreserved_extraSigBlock_signatureAppended()
             throws Exception {
         // The DefaultApkSignerEngine contains support to append a signature to an existing

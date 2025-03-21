@@ -1882,6 +1882,21 @@ public class ApkVerifierTest {
     }
 
     @Test
+    public void verify_apkWithZip64Records_verifiesSuccessfully() throws Exception {
+        // When any of the fields in the Local File Header or Central Directory Record exceed
+        // the value that can be stored in 32-bits, then the value is written as 0xffffffff and
+        // the actual value is written to the Zip64 record within the extra field of the current
+        // block; for APKs, these fields are uncompressed size, compressed size, and local file
+        // header offset. This test uses an APK with assets records that have been modified to
+        // write the 0xffffffff values for combinations of these fields in both the local file
+        // header as well as the central directory record; the actual size of these fields is then
+        // written in the corresponding field in the Zip64 record.
+        ApkVerifier.Result result = verify("v1v2v3-with-zip64-records.apk");
+
+        assertVerified(result);
+    }
+
+    @Test
     public void compareMatchingDigests() throws Exception {
         Map<ContentDigestAlgorithm, byte[]> firstDigest = new HashMap<>();
         firstDigest.put(ContentDigestAlgorithm.SHA256,
