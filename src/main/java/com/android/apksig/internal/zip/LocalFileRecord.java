@@ -16,10 +16,16 @@
 
 package com.android.apksig.internal.zip;
 
+import static com.android.apksig.internal.zip.ZipUtils.UINT32_MAX_VALUE;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_COMPRESSED_SIZE_FIELD_NAME;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME;
+
 import com.android.apksig.internal.util.ByteBufferSink;
+import com.android.apksig.internal.zip.ZipUtils.Zip64Fields;
 import com.android.apksig.util.DataSink;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.zip.ZipFormatException;
+
 import java.io.Closeable;
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -86,7 +92,9 @@ public class LocalFileRecord {
     }
 
     public ByteBuffer getExtra() {
-        return (mExtra.capacity() > 0) ? mExtra.slice() : mExtra;
+        ByteBuffer result = (mExtra.capacity() > 0) ? mExtra.slice() : mExtra;
+        result.order(ByteOrder.LITTLE_ENDIAN);
+        return result;
     }
 
     public int getExtraFieldStartOffsetInsideRecord() {
@@ -185,29 +193,6 @@ public class LocalFileRecord {
         long uncompressedDataCrc32FromCdRecord = cdRecord.getCrc32();
         long compressedDataSizeFromCdRecord = cdRecord.getCompressedSize();
         long uncompressedDataSizeFromCdRecord = cdRecord.getUncompressedSize();
-        if (!dataDescriptorUsed) {
-            long crc32 = ZipUtils.getUnsignedInt32(header, CRC32_OFFSET);
-            if (crc32 != uncompressedDataCrc32FromCdRecord) {
-                throw new ZipFormatException(
-                        "CRC-32 mismatch between Local File Header and Central Directory for entry "
-                                + entryName + ". LFH: " + crc32
-                                + ", CD: " + uncompressedDataCrc32FromCdRecord);
-            }
-            long compressedSize = ZipUtils.getUnsignedInt32(header, COMPRESSED_SIZE_OFFSET);
-            if (compressedSize != compressedDataSizeFromCdRecord) {
-                throw new ZipFormatException(
-                        "Compressed size mismatch between Local File Header and Central Directory"
-                                + " for entry " + entryName + ". LFH: " + compressedSize
-                                + ", CD: " + compressedDataSizeFromCdRecord);
-            }
-            long uncompressedSize = ZipUtils.getUnsignedInt32(header, UNCOMPRESSED_SIZE_OFFSET);
-            if (uncompressedSize != uncompressedDataSizeFromCdRecord) {
-                throw new ZipFormatException(
-                        "Uncompressed size mismatch between Local File Header and Central Directory"
-                                + " for entry " + entryName + ". LFH: " + uncompressedSize
-                                + ", CD: " + uncompressedDataSizeFromCdRecord);
-            }
-        }
         int nameLength = ZipUtils.getUnsignedInt16(header, NAME_LENGTH_OFFSET);
         if (nameLength > cdRecordEntryNameSizeBytes) {
             throw new ZipFormatException(
@@ -243,6 +228,75 @@ public class LocalFileRecord {
         if ((extraFieldContentsNeeded) && (extraLength > 0)) {
             extra = apk.getByteBuffer(
                     headerStartOffset + HEADER_SIZE_BYTES + nameLength, extraLength);
+            extra.order(ByteOrder.LITTLE_ENDIAN);
+        }
+
+        if (!dataDescriptorUsed) {
+            long crc32 = ZipUtils.getUnsignedInt32(header, CRC32_OFFSET);
+            if (crc32 != uncompressedDataCrc32FromCdRecord) {
+                throw new ZipFormatException(
+                        "CRC-32 mismatch between Local File Header and Central Directory for entry "
+                                + entryName
+                                + ". LFH: "
+                                + crc32
+                                + ", CD: "
+                                + uncompressedDataCrc32FromCdRecord);
+            }
+            long compressedSize = ZipUtils.getUnsignedInt32(header, COMPRESSED_SIZE_OFFSET);
+            long uncompressedSize = ZipUtils.getUnsignedInt32(header, UNCOMPRESSED_SIZE_OFFSET);
+
+            // If the record contains an extra field and any of the other fields subject to the
+            // 32-bit limitation indicate the presence of a ZIP64 block, then check the extra field
+            // for this block to obtain the actual values of the affected fields.
+            if (extraLength > 0
+                    && (compressedSize == UINT32_MAX_VALUE
+                            || uncompressedSize == UINT32_MAX_VALUE)) {
+                // If the extra buffer was not previously obtained due to the flag not being set,
+                // get the extra buffer now.
+                if (!extraFieldContentsNeeded) {
+                    extra =
+                            apk.getByteBuffer(
+                                    headerStartOffset + HEADER_SIZE_BYTES + nameLength,
+                                    extraLength);
+                    extra.order(ByteOrder.LITTLE_ENDIAN);
+                }
+                Zip64Fields zip64Fields = new Zip64Fields(uncompressedSize, compressedSize);
+                ZipUtils.parseExtraField(extra, zip64Fields);
+                extra.position(0);
+                uncompressedSize =
+                        ZipUtils.checkAndReturnZip64Value(
+                                uncompressedSize,
+                                zip64Fields.uncompressedSize,
+                                entryName,
+                                ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME);
+                compressedSize =
+                        ZipUtils.checkAndReturnZip64Value(
+                                compressedSize,
+                                zip64Fields.compressedSize,
+                                entryName,
+                                ZIP64_COMPRESSED_SIZE_FIELD_NAME);
+            }
+            if (compressedSize != compressedDataSizeFromCdRecord) {
+                throw new ZipFormatException(
+                        "Compressed size mismatch between Local File Header and Central Directory"
+                                + " for entry "
+                                + entryName
+                                + ". LFH: "
+                                + compressedSize
+                                + ", CD: "
+                                + compressedDataSizeFromCdRecord);
+            }
+
+            if (uncompressedSize != uncompressedDataSizeFromCdRecord) {
+                throw new ZipFormatException(
+                        "Uncompressed size mismatch between Local File Header and Central Directory"
+                                + " for entry "
+                                + entryName
+                                + ". LFH: "
+                                + uncompressedSize
+                                + ", CD: "
+                                + uncompressedDataSizeFromCdRecord);
+            }
         }
 
         long recordEndOffset = dataEndOffset;

@@ -16,7 +16,14 @@
 
 package com.android.apksig.internal.zip;
 
+import static com.android.apksig.internal.zip.ZipUtils.UINT32_MAX_VALUE;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_COMPRESSED_SIZE_FIELD_NAME;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_LFH_OFFSET_FIELD_NAME;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME;
+
+import com.android.apksig.internal.zip.ZipUtils.Zip64Fields;
 import com.android.apksig.zip.ZipFormatException;
+
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -40,6 +47,7 @@ public class CentralDirectoryRecord {
 
     private static final int GP_FLAGS_OFFSET = 8;
     private static final int LOCAL_FILE_HEADER_OFFSET_OFFSET = 42;
+    private static final int EXTRA_FIELD_OFFSET = 46;
     private static final int NAME_OFFSET = HEADER_SIZE_BYTES;
 
     private final ByteBuffer mData;
@@ -164,6 +172,39 @@ public class CentralDirectoryRecord {
                     new BufferUnderflowException());
         }
         String name = getName(buf, originalPosition + NAME_OFFSET, nameSize);
+        // If the record contains an extra field and any of the other fields subject to the 32-bit
+        // limitation indicate the presence of a ZIP64 block, then check the extra field for this
+        // block to obtain the actual values of the affected fields.
+        if (extraSize > 0
+                && (uncompressedSize == UINT32_MAX_VALUE
+                        || compressedSize == UINT32_MAX_VALUE
+                        || localFileHeaderOffset == UINT32_MAX_VALUE)) {
+            buf.position(originalPosition + EXTRA_FIELD_OFFSET + nameSize);
+            int originalLimit = buf.limit();
+            ByteBuffer extra = buf.slice();
+            buf.limit(originalLimit);
+            Zip64Fields zip64Fields =
+                    new Zip64Fields(uncompressedSize, compressedSize, localFileHeaderOffset);
+            ZipUtils.parseExtraField(extra, zip64Fields);
+            uncompressedSize =
+                    ZipUtils.checkAndReturnZip64Value(
+                            uncompressedSize,
+                            zip64Fields.uncompressedSize,
+                            name,
+                            ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME);
+            compressedSize =
+                    ZipUtils.checkAndReturnZip64Value(
+                            compressedSize,
+                            zip64Fields.compressedSize,
+                            name,
+                            ZIP64_COMPRESSED_SIZE_FIELD_NAME);
+            localFileHeaderOffset =
+                    ZipUtils.checkAndReturnZip64Value(
+                            localFileHeaderOffset,
+                            zip64Fields.localFileHeaderOffset,
+                            name,
+                            ZIP64_LFH_OFFSET_FIELD_NAME);
+        }
         buf.position(originalPosition);
         int originalLimit = buf.limit();
         int recordEndInBuf = originalPosition + recordSize;
