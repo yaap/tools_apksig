@@ -356,6 +356,9 @@ public abstract class ApkUtils {
         if ("Baklava".equals(codename)) {
             return 34; // VIC (35) was the version before Baklava, return VIC version minus one
         }
+        if ("CANARY".equals(codename)) {
+            return 9999; // 10_000 minus one
+        }
 
         char firstChar = codename.isEmpty() ? ' ' : codename.charAt(0);
         // Codenames are case-sensitive. Only codenames starting with A-Z are supported for now.
