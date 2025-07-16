@@ -24,24 +24,31 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.android.apksig.ApkSigOptions;
+import com.android.apksig.ApkSigOptions.ByteBufferAllocationMode;
 import com.android.apksig.SourceStampVerifier.Result;
 import com.android.apksig.SourceStampVerifier.Result.SignerInfo;
 import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSources;
 
+import org.junit.After;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
+import org.junit.runners.Parameterized;
+import org.junit.runners.Parameterized.Parameter;
+import org.junit.runners.Parameterized.Parameters;
 
 import java.nio.ByteBuffer;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-@RunWith(JUnit4.class)
+@RunWith(Parameterized.class)
 public class SourceStampVerifierTest {
     private static final String RSA_2048_CERT_SHA256_DIGEST =
             "fb5dbd3c669af9fc236c6991e6387b7f11ff0590997f22d0f5c74ff40e04fca8";
@@ -55,6 +62,32 @@ public class SourceStampVerifierTest {
             "d78405f761ff6236cc9b570347a570aba0c62a129a3ac30c831c64d09ad95469";
     private static final String EC_P256_3_CERT_SHA256_DIGEST =
             "9369370ffcfdc1e92dae777252c05c483b8cbb55fa9d5fd9f6317f623ae6d8c6";
+
+    private ByteBufferAllocationMode mPrevAllocationMode;
+
+    @Parameter(0)
+    public ByteBufferAllocationMode mAllocationMode;
+
+    @Parameters(name = "{index}: mode={0}")
+    public static Collection<Object[]> getParameters() {
+        return Arrays.asList(
+                new Object[][] {
+                        {ByteBufferAllocationMode.HEAP},
+                        {ByteBufferAllocationMode.DIRECT}
+                });
+    }
+
+    @Before
+    public void setUp() {
+        ApkSigOptions apkSigOptions = ApkSigOptions.getInstance();
+        mPrevAllocationMode = apkSigOptions.getByteBufferAllocationMode();
+        apkSigOptions.setByteBufferAllocationMode(mAllocationMode);
+    }
+
+    @After
+    public void tearDown() {
+        ApkSigOptions.getInstance().setByteBufferAllocationMode(mPrevAllocationMode);
+    }
 
     @Test
     public void verifySourceStamp_correctSignature() throws Exception {
