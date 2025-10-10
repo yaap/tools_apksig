@@ -47,6 +47,9 @@ public class ApkUtilsTest {
         assertEquals(25, ApkUtils.getMinSdkVersionForCodename("OMG"));
         // Speculative: Q should be 27 or higher (not yet known at the time of writing)
         assertEquals(27, ApkUtils.getMinSdkVersionForCodename("QQQ"));
+        assertEquals(34, ApkUtils.getMinSdkVersionForCodename("Baklava"));
+        assertEquals(35, ApkUtils.getMinSdkVersionForCodename("CinnamonBun"));
+        assertEquals(9999, ApkUtils.getMinSdkVersionForCodename("CANARY"));
     }
 
     @Test(expected = CodenameMinSdkVersionException.class)
