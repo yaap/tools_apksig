@@ -57,7 +57,7 @@ public abstract class ApkUtils {
      */
     public static ZipSections findZipSections(DataSource apk)
             throws IOException, ZipFormatException {
-        com.android.apksig.zip.ZipSections zipSections = ApkUtilsLite.findZipSections(apk);
+        com.android.apksig.zip.ZipSections zipSections = ZipUtils.findZipSections(apk);
         return new ZipSections(
                 zipSections.getZipCentralDirectoryOffset(),
                 zipSections.getZipCentralDirectorySizeBytes(),

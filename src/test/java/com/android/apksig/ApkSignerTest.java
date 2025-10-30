@@ -1893,6 +1893,79 @@ public class ApkSignerTest {
     }
 
     @Test
+    public void testSignApk_apkWithZip64Eocd_signsAndVerifiesSuccessfully() throws Exception {
+        // The APK used in this test has been modified with a zip64 end of central directory
+        // record; the standard end of central directory record has the max value markers
+        // indicating that a zip64 EoCD is present, but the values in the zip64 fields are the
+        // standard values. While this generally shouldn't be the case, it provides a good test
+        // case to verify zip64 EoCD parsing as well as rewriting a standard zip EoCD record
+        // as part of the signing process.
+        List<ApkSigner.SignerConfig> rsa2048SignerConfig =
+                Collections.singletonList(
+                        getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME));
+
+        File signedApk =
+                sign(
+                        "original-with-zip64-eocd.apk",
+                        new ApkSigner.Builder(rsa2048SignerConfig)
+                                .setV1SigningEnabled(true)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(true));
+
+        ApkVerifier.Result result = verify(signedApk, null);
+        assertVerified(result);
+    }
+
+    @Test
+    public void testSignApk_apkWithOver64kFiles_signsAndVerifiesSuccessfully() throws Exception {
+        // The APK used for this test has been updated to include over 64k files which puts it
+        // over the threshold for a standard zip end of central directory. This test verifies
+        // the zip64 end of central directory record is properly parsed, and since the output
+        // will also require zip64, that it is properly rewritten.
+        List<ApkSigner.SignerConfig> rsa2048SignerConfig =
+                Collections.singletonList(
+                        getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME));
+
+        File signedApk =
+                sign(
+                        "original-with-over-64k-files.apk",
+                        new ApkSigner.Builder(rsa2048SignerConfig)
+                                .setV1SigningEnabled(true)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(true));
+
+        ApkVerifier.Result result = verify(signedApk, null);
+        assertVerified(result);
+    }
+
+    @Test
+    public void testSignApk_apkWithExactly64kFiles_signsAndVerifiesSuccessfully() throws Exception {
+        // The APK used for this test has been updated to include exactly 64k-1 files; this is a
+        // unique edge case with zip files since the value 0xffff is used as a marker in the zip
+        // end of central directory record to indicate that a zip64 end of central directory should
+        // be present, but it is also a valid value for the field with no zip64 EoCD. This test
+        // verifies when an existing APK has the exact maximum value for a zip EoCD record field
+        // but doesn't actually require the zip64 EoCD, then the code properly treats the APK as
+        // a standard zip file; this test will also verify that the signing process is able to
+        // output an apporpriate zip64 EoCD since adding the V1 signatures will put the zip file
+        // over the threshold of files for a standard zip.
+        List<ApkSigner.SignerConfig> rsa2048SignerConfig =
+                Collections.singletonList(
+                        getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME));
+
+        File signedApk =
+                sign(
+                        "original-with-64k-files.apk",
+                        new ApkSigner.Builder(rsa2048SignerConfig)
+                                .setV1SigningEnabled(true)
+                                .setV2SigningEnabled(true)
+                                .setV3SigningEnabled(true));
+
+        ApkVerifier.Result result = verify(signedApk, null);
+        assertVerified(result);
+    }
+
+    @Test
     public void testOtherSignersSignaturesPreserved_extraSigBlock_signatureAppended()
             throws Exception {
         // The DefaultApkSignerEngine contains support to append a signature to an existing

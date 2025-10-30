@@ -15,23 +15,45 @@
  */
 package com.android.apksig.internal.zip;
 
+import static com.android.apksig.internal.zip.CentralDirectoryRecord.MIN_VERSION_SUPPORT_ZIP64;
+import static com.android.apksig.internal.zip.EocdRecord.ZIP64_EOCD_REC_MIN_SIZE;
 import static com.android.apksig.internal.zip.ZipUtils.UINT16_MAX_VALUE;
 import static com.android.apksig.internal.zip.ZipUtils.UINT32_MAX_VALUE;
 import static com.android.apksig.internal.zip.ZipUtils.ZIP64_COMPRESSED_SIZE_FIELD_NAME;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_LOCATOR_SIG;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_LOCATOR_SIZE;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_REC_CD_SIZE_FIELD_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_REC_HEADER_SIZE;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_REC_SIG;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP64_EOCD_SIZE_OFFSET;
 import static com.android.apksig.internal.zip.ZipUtils.ZIP64_LFH_OFFSET_FIELD_NAME;
 import static com.android.apksig.internal.zip.ZipUtils.ZIP64_RECORD_ID;
 import static com.android.apksig.internal.zip.ZipUtils.ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP_EOCD_REC_MIN_SIZE;
+import static com.android.apksig.internal.zip.ZipUtils.ZIP_EOCD_REC_SIG;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import com.android.apksig.internal.zip.ZipUtils.Zip64Fields;
+import com.android.apksig.util.DataSink;
+import com.android.apksig.util.DataSource;
 import com.android.apksig.zip.ZipFormatException;
+import com.android.apksig.zip.ZipSections;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
@@ -264,6 +286,381 @@ public class ZipUtilsTest {
                                 ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME));
     }
 
+    @Test
+    public void isEocdZip64_withZip64Signature_returnsTrue() {
+        ByteBuffer buffer = ByteBuffer.allocate(4);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0, ZIP64_EOCD_REC_SIG);
+
+        assertTrue(ZipUtils.isEocdZip64(buffer));
+    }
+
+    @Test
+    public void isEocdZip64_withZipSignature_returnsFalse() {
+        ByteBuffer buffer = ByteBuffer.allocate(4);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0, ZIP_EOCD_REC_SIG);
+
+        assertFalse(ZipUtils.isEocdZip64(buffer));
+    }
+
+    @Test
+    public void isEocdZip64_withInvalidSignature_throwsException() {
+        ByteBuffer buffer = ByteBuffer.allocate(4);
+        buffer.order(ByteOrder.LITTLE_ENDIAN);
+        buffer.putInt(0, 0x12345678);
+
+        assertThrows(IllegalArgumentException.class, () -> ZipUtils.isEocdZip64(buffer));
+    }
+
+    @Test
+    public void getZipEocdCentralDirectoryOffset_zip64_returnsCorrectOffset() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        long expectedOffset = 0x123456789abcdef0L;
+        eocd.putLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET, expectedOffset);
+
+        long actualOffset = ZipUtils.getZipEocdCentralDirectoryOffset(eocd);
+
+        assertEquals(expectedOffset, actualOffset);
+    }
+
+    @Test
+    public void getZipEocdCentralDirectoryOffset_zip_returnsCorrectOffset() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP_EOCD_REC_SIG);
+        long expectedOffset = 0x12345678L;
+        eocd.putInt(16, (int) expectedOffset);
+
+        long actualOffset = ZipUtils.getZipEocdCentralDirectoryOffset(eocd);
+
+        assertEquals(expectedOffset, actualOffset);
+    }
+
+    @Test
+    public void setZipEocdCentralDirectoryOffset_zip64WithoutLocator_throwsException() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        // This field is the size of the rest of the record,
+        // 56 total bytes - 4 for the signature - 8 for the size itself.
+        eocd.putLong(ZIP64_EOCD_SIZE_OFFSET, 44);
+        eocd.putLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET, 0x1000);
+        long newOffset = 0x2000;
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ZipUtils.setZipEocdCentralDirectoryOffset(eocd, newOffset));
+    }
+
+    @Test
+    public void setZipEocdCentralDirectoryOffset_zip64WithLocator_updatesEocdAndLocator() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE + ZIP64_EOCD_LOCATOR_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+
+        // Zip64 EOCD record
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        eocd.putLong(ZIP64_EOCD_SIZE_OFFSET, 44);
+        long originalCdOffset = 0x2000;
+        eocd.putLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET, originalCdOffset);
+
+        // Zip64 EOCD locator
+        int locatorOffset = ZIP64_EOCD_REC_MIN_SIZE;
+        eocd.putInt(locatorOffset, ZIP64_EOCD_LOCATOR_SIG);
+        long originalZip64EocdOffset = 0x10000;
+        eocd.putLong(
+                locatorOffset + ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET,
+                originalZip64EocdOffset);
+
+        long newCdOffset = 0x3000;
+        ZipUtils.setZipEocdCentralDirectoryOffset(eocd, newCdOffset);
+
+        // Check CD offset in zip64 EOCD is updated
+        assertEquals(newCdOffset, eocd.getLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET));
+
+        // Check zip64 EOCD offset in locator is updated
+        long delta = originalCdOffset - newCdOffset;
+        long expectedNewZip64EocdOffset = originalZip64EocdOffset - delta;
+        assertEquals(
+                expectedNewZip64EocdOffset,
+                eocd.getLong(locatorOffset + ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET));
+    }
+
+    @Test
+    public void setZipEocdCentralDirectoryOffset_zip_updatesOffset() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP_EOCD_REC_SIG);
+        eocd.putInt(16, 0x1000);
+        long newOffset = 0x2000;
+
+        ZipUtils.setZipEocdCentralDirectoryOffset(eocd, newOffset);
+
+        assertEquals(newOffset, eocd.getInt(16) & 0xffffffffL);
+    }
+
+    @Test
+    public void findZipSections_withZip64Apk_returnsCorrectSections() throws Exception {
+        long cdOffset = 0x100000000L;
+        long cdSize = 0x8000;
+        int cdRecordCount = 65536; // > 0xffff
+
+        // Create a mock APK with a zip64 EOCD structure.
+        // The structure is: [Zip64 EOCD Record] [Zip64 EOCD Locator] [EOCD Record]
+        int zip64EocdRecordSize = ZIP64_EOCD_REC_MIN_SIZE;
+        int zip64EocdLocatorSize = ZIP64_EOCD_LOCATOR_SIZE;
+        int eocdRecordSize = ZIP_EOCD_REC_MIN_SIZE;
+        int eocdStructureSize = zip64EocdRecordSize + zip64EocdLocatorSize + eocdRecordSize;
+
+        long zip64EocdOffset = cdOffset + cdSize;
+        long fileSize = zip64EocdOffset + eocdStructureSize;
+
+        ByteBuffer apkBytes = ByteBuffer.allocate(eocdStructureSize);
+        apkBytes.order(ByteOrder.LITTLE_ENDIAN);
+
+        // 1. Zip64 EOCD Record
+        apkBytes.putInt(ZIP64_EOCD_REC_SIG);
+        apkBytes.putLong(zip64EocdRecordSize - ZIP64_EOCD_REC_HEADER_SIZE); // size of record
+        apkBytes.putShort((short) MIN_VERSION_SUPPORT_ZIP64); // version made by
+        apkBytes.putShort((short) MIN_VERSION_SUPPORT_ZIP64); // version needed to extract
+        apkBytes.putInt(0); // number of this disk
+        apkBytes.putInt(0); // number of disk with start of CD
+        apkBytes.putLong(cdRecordCount); // total records on this disk
+        apkBytes.putLong(cdRecordCount); // total records
+        apkBytes.putLong(cdSize); // size of CD
+        apkBytes.putLong(cdOffset); // offset of CD
+
+        // 2. Zip64 EOCD Locator
+        apkBytes.putInt(ZIP64_EOCD_LOCATOR_SIG);
+        apkBytes.putInt(0); // number of disk with zip64 eocd
+        apkBytes.putLong(zip64EocdOffset); // offset of zip64 eocd
+        apkBytes.putInt(1); // total number of disks
+
+        // 3. EOCD Record
+        apkBytes.putInt(ZIP_EOCD_REC_SIG);
+        apkBytes.putShort((short) 0); // number of this disk
+        apkBytes.putShort((short) 0); // number of disk with start of CD
+        ZipUtils.putUnsignedInt16(apkBytes, UINT16_MAX_VALUE); // total records on this disk
+        ZipUtils.putUnsignedInt16(apkBytes, UINT16_MAX_VALUE); // total records
+        ZipUtils.putUnsignedInt32(apkBytes, UINT32_MAX_VALUE); // size of CD
+        ZipUtils.putUnsignedInt32(apkBytes, UINT32_MAX_VALUE); // offset of CD
+        apkBytes.putShort((short) 0); // comment length
+        apkBytes.flip();
+
+        DataSource ds = new MockDataSource(fileSize, zip64EocdOffset, apkBytes);
+        ZipSections sections = ZipUtils.findZipSections(ds);
+
+        assertEquals(cdOffset, sections.getZipCentralDirectoryOffset());
+        assertEquals(cdSize, sections.getZipCentralDirectorySizeBytes());
+        assertEquals(cdRecordCount, sections.getZipCentralDirectoryRecordCount());
+        assertEquals(zip64EocdOffset, sections.getZipEndOfCentralDirectoryOffset());
+        assertTrue(ZipUtils.isEocdZip64(sections.getZipEndOfCentralDirectory()));
+    }
+
+    @Test
+    public void updateZipEocdCommentLen_zip64_updatesStandardEocdCommentLen() {
+        // Create a zip64 EOCD structure with a comment.
+        int zip64EocdRecordSize = ZIP64_EOCD_REC_MIN_SIZE;
+        int zip64EocdLocatorSize = ZIP64_EOCD_LOCATOR_SIZE;
+        int eocdRecordSize = ZIP_EOCD_REC_MIN_SIZE;
+        int commentLength = 10;
+        int bufferSize =
+                zip64EocdRecordSize + zip64EocdLocatorSize + eocdRecordSize + commentLength;
+
+        ByteBuffer eocdStructure = ByteBuffer.allocate(bufferSize);
+        eocdStructure.order(ByteOrder.LITTLE_ENDIAN);
+
+        // 1. Zip64 EOCD Record
+        eocdStructure.putInt(ZIP64_EOCD_REC_SIG);
+        eocdStructure.putLong(
+                ZIP64_EOCD_SIZE_OFFSET, zip64EocdRecordSize - ZIP64_EOCD_REC_HEADER_SIZE);
+        eocdStructure.position(zip64EocdRecordSize);
+
+        // 2. Zip64 EOCD Locator
+        eocdStructure.putInt(ZIP64_EOCD_LOCATOR_SIG);
+        eocdStructure.position(zip64EocdRecordSize + zip64EocdLocatorSize);
+
+        // 3. EOCD Record
+        int standardEocdOffset = zip64EocdRecordSize + zip64EocdLocatorSize;
+        eocdStructure.putInt(standardEocdOffset, ZIP_EOCD_REC_SIG);
+        eocdStructure.putShort(
+                standardEocdOffset + ZipUtils.ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET, (short) 0);
+        eocdStructure.position(0);
+
+        ZipUtils.updateZipEocdCommentLen(eocdStructure);
+
+        int updatedCommentLen =
+                eocdStructure.getShort(
+                        standardEocdOffset + ZipUtils.ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET);
+        assertEquals(commentLength, updatedCommentLen);
+    }
+
+    @Test
+    public void updateZipEocdCommentLen_zip_updatesCommentLen() {
+        int commentLength = 10;
+        int bufferSize = ZIP_EOCD_REC_MIN_SIZE + commentLength;
+        ByteBuffer eocd = ByteBuffer.allocate(bufferSize);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP_EOCD_REC_SIG);
+        eocd.putShort(ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET, (short) 0);
+        eocd.position(0);
+
+        ZipUtils.updateZipEocdCommentLen(eocd);
+
+        int updatedCommentLen = eocd.getShort(ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET);
+        assertEquals(commentLength, updatedCommentLen);
+    }
+
+    @Test
+    public void getZipEocdCentralDirectorySizeBytes_zip64_returnsCorrectSize() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        long expectedSize = 0x123456789abcdef0L;
+        eocd.putLong(ZIP64_EOCD_REC_CD_SIZE_FIELD_OFFSET, expectedSize);
+
+        long actualSize = ZipUtils.getZipEocdCentralDirectorySizeBytes(eocd);
+
+        assertEquals(expectedSize, actualSize);
+    }
+
+    @Test
+    public void getZipEocdCentralDirectorySizeBytes_zip_returnsCorrectSize() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP_EOCD_REC_SIG);
+        long expectedSize = 0x12345678L;
+        eocd.putInt(ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET, (int) expectedSize);
+
+        long actualSize = ZipUtils.getZipEocdCentralDirectorySizeBytes(eocd);
+
+        assertEquals(expectedSize, actualSize);
+    }
+
+    @Test
+    public void getZipEocdCentralDirectoryTotalRecordCount_zip64_returnsCorrectCount() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        long expectedCount = 0x12345678;
+        eocd.putLong(ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET, expectedCount);
+
+        int actualCount = ZipUtils.getZipEocdCentralDirectoryTotalRecordCount(eocd);
+
+        assertEquals(expectedCount, actualCount);
+    }
+
+    @Test
+    public void getZipEocdCentralDirectoryTotalRecordCount_zip64_countTooLarge_throwsException() {
+        // The original ZipSections class stored the central directory total record count in an
+        // int, but zip64 supports a long value for this field. This test verifies an exception is
+        // thrown if more than Integer.MAX_VALUE records are present since this would require a
+        // new API and a new ZipSections class.
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP64_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP64_EOCD_REC_SIG);
+        long tooLargeCount = (long) Integer.MAX_VALUE + 1;
+        eocd.putLong(ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET, tooLargeCount);
+
+        assertThrows(
+                IllegalArgumentException.class,
+                () -> ZipUtils.getZipEocdCentralDirectoryTotalRecordCount(eocd));
+    }
+
+    @Test
+    public void getZipEocdCentralDirectoryTotalRecordCount_zip_returnsCorrectCount() {
+        ByteBuffer eocd = ByteBuffer.allocate(ZIP_EOCD_REC_MIN_SIZE);
+        eocd.order(ByteOrder.LITTLE_ENDIAN);
+        eocd.putInt(0, ZIP_EOCD_REC_SIG);
+        int expectedCount = 0x1234;
+        eocd.putShort(ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET, (short) expectedCount);
+
+        int actualCount = ZipUtils.getZipEocdCentralDirectoryTotalRecordCount(eocd);
+
+        assertEquals(expectedCount, actualCount);
+    }
+
+    @Test
+    public void findZipSections_withZipApk_returnsCorrectSections() throws Exception {
+        long cdOffset = 0x1000;
+        long cdSize = 0x800;
+        int cdRecordCount = 10;
+
+        int eocdRecordSize = 22;
+        long eocdOffset = cdOffset + cdSize;
+        long fileSize = eocdOffset + eocdRecordSize;
+
+        ByteBuffer apkBytes = ByteBuffer.allocate(eocdRecordSize);
+        apkBytes.order(ByteOrder.LITTLE_ENDIAN);
+
+        // EOCD Record
+        apkBytes.putInt(ZIP_EOCD_REC_SIG);
+        apkBytes.putShort((short) 0); // number of this disk
+        apkBytes.putShort((short) 0); // number of disk with start of CD
+        ZipUtils.putUnsignedInt16(apkBytes, cdRecordCount); // total records on this disk
+        ZipUtils.putUnsignedInt16(apkBytes, cdRecordCount); // total records
+        ZipUtils.putUnsignedInt32(apkBytes, cdSize); // size of CD
+        ZipUtils.putUnsignedInt32(apkBytes, cdOffset); // offset of CD
+        apkBytes.putShort((short) 0); // comment length
+        apkBytes.flip();
+
+        DataSource ds = new MockDataSource(fileSize, eocdOffset, apkBytes);
+        ZipSections sections = ZipUtils.findZipSections(ds);
+
+        assertEquals(cdOffset, sections.getZipCentralDirectoryOffset());
+        assertEquals(cdSize, sections.getZipCentralDirectorySizeBytes());
+        assertEquals(cdRecordCount, sections.getZipCentralDirectoryRecordCount());
+        assertEquals(eocdOffset, sections.getZipEndOfCentralDirectoryOffset());
+        assertFalse(ZipUtils.isEocdZip64(sections.getZipEndOfCentralDirectory()));
+    }
+
+    @Test
+    public void findZipSections_withZip64MarkersNoLocator_returnsCorrectSections()
+            throws Exception {
+        // This test verifies that when an EOCD record contains one of the ZIP64 marker values
+        // (e.g., 0xffff for record count), but there is no ZIP64 EOCD Locator, the values from
+        // the original EOCD are used. This simulates a non-ZIP64 file where a value happens to be
+        // the marker value. Arbitrary data is added before the EOCD where the ZIP64 EOCD
+        // Locator would otherwise be.
+        long cdOffset = 0x1000;
+        long cdSize = 0x800;
+        int cdRecordCount = UINT16_MAX_VALUE;
+        int dataSize = ZIP64_EOCD_LOCATOR_SIZE;
+
+        long dataOffset = cdOffset + cdSize;
+        long eocdOffset = dataOffset + dataSize;
+        long fileSize = eocdOffset + ZIP_EOCD_REC_MIN_SIZE;
+
+        ByteBuffer apkBytes = ByteBuffer.allocate(dataSize + ZIP_EOCD_REC_MIN_SIZE);
+        apkBytes.order(ByteOrder.LITTLE_ENDIAN);
+
+        // Data that is not a ZIP64 EOCD Locator
+        byte[] data = new byte[dataSize];
+        apkBytes.put(data);
+
+        // Standard EOCD Record
+        apkBytes.putInt(ZIP_EOCD_REC_SIG);
+        apkBytes.putShort((short) 0); // number of this disk
+        apkBytes.putShort((short) 0); // number of disk with start of CD
+        ZipUtils.putUnsignedInt16(apkBytes, cdRecordCount); // total records on this disk
+        ZipUtils.putUnsignedInt16(apkBytes, cdRecordCount); // total records
+        ZipUtils.putUnsignedInt32(apkBytes, cdSize); // size of CD
+        ZipUtils.putUnsignedInt32(apkBytes, cdOffset); // offset of CD
+        apkBytes.putShort((short) 0); // comment length
+        apkBytes.flip();
+
+        DataSource ds = new MockDataSource(fileSize, dataOffset, apkBytes);
+        ZipSections sections = ZipUtils.findZipSections(ds);
+
+        assertEquals(cdOffset, sections.getZipCentralDirectoryOffset());
+        assertEquals(cdSize, sections.getZipCentralDirectorySizeBytes());
+        assertEquals(cdRecordCount, sections.getZipCentralDirectoryRecordCount());
+        assertEquals(eocdOffset, sections.getZipEndOfCentralDirectoryOffset());
+        assertFalse(ZipUtils.isEocdZip64(sections.getZipEndOfCentralDirectory()));
+    }
+
     private static class ExtraBufferBuilder {
         private int mPriorRecordSize = 0;
         private int mNextRecordSize = 0;
@@ -342,6 +739,74 @@ public class ZipUtilsTest {
         ExtraBufferBuilder setLfhOffset(long lfhOffset) {
             mLfhOffset = lfhOffset;
             return this;
+        }
+    }
+
+    private static class MockDataSource implements DataSource {
+        private final long mSize;
+        private final long mDataOffset;
+        private final ByteBuffer mData;
+
+        MockDataSource(long size, long dataOffset, ByteBuffer data) {
+            mSize = size;
+            mDataOffset = dataOffset;
+            mData = data;
+        }
+
+        @Override
+        public long size() {
+            return mSize;
+        }
+
+        @Override
+        public void feed(long offset, long size, DataSink sink) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public void copyTo(long offset, int size, ByteBuffer dest) throws IOException {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override
+        public ByteBuffer getByteBuffer(long offset, int size) throws IOException {
+            if (offset < mDataOffset || (offset + size) > (mDataOffset + mData.capacity())) {
+                throw new IOException(
+                        "Requested data out of range: offset="
+                                + offset
+                                + ", size="
+                                + size
+                                + ", data range=["
+                                + mDataOffset
+                                + ", "
+                                + (mDataOffset + mData.capacity())
+                                + ")");
+            }
+            int dataOffsetInBuf = (int) (offset - mDataOffset);
+            ByteBuffer source = mData.duplicate();
+            source.order(ByteOrder.LITTLE_ENDIAN);
+            source.position(dataOffsetInBuf);
+            source.limit(dataOffsetInBuf + size);
+            ByteBuffer result = source.slice();
+            result.order(ByteOrder.LITTLE_ENDIAN);
+            return result;
+        }
+
+        @Override
+        public DataSource slice(long offset, long size) {
+            if (offset < 0 || size < 0 || (offset + size) > mSize) {
+                throw new IllegalArgumentException(
+                        "Requested slice out of range: offset="
+                                + offset
+                                + ", size="
+                                + size
+                                + ", data size="
+                                + mSize);
+            }
+            // For simplicity, this mock implementation will return a new MockDataSource that
+            // represents the sliced portion of the original data.
+            // In a real scenario, you might want to create a new ByteBuffer slice.
+            return new MockDataSource(size, mDataOffset + offset, mData);
         }
     }
 }
