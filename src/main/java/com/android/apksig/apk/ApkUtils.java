@@ -361,6 +361,7 @@ public abstract class ApkUtils {
                 // Baklava (36) was the version before CinnamonBun, return Baklava version minus one
                 return 35;
             case "CANARY":
+            case "DEV":
                 // 10_000 minus one
                 return 9999;
         }
