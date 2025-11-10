@@ -57,7 +57,7 @@ public abstract class ApkUtils {
      */
     public static ZipSections findZipSections(DataSource apk)
             throws IOException, ZipFormatException {
-        com.android.apksig.zip.ZipSections zipSections = ApkUtilsLite.findZipSections(apk);
+        com.android.apksig.zip.ZipSections zipSections = ZipUtils.findZipSections(apk);
         return new ZipSections(
                 zipSections.getZipCentralDirectoryOffset(),
                 zipSections.getZipCentralDirectorySizeBytes(),
@@ -361,6 +361,7 @@ public abstract class ApkUtils {
                 // Baklava (36) was the version before CinnamonBun, return Baklava version minus one
                 return 35;
             case "CANARY":
+            case "DEV":
                 // 10_000 minus one
                 return 9999;
         }

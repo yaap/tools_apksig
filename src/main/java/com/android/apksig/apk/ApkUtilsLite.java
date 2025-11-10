@@ -16,7 +16,6 @@
 
 package com.android.apksig.apk;
 
-import com.android.apksig.internal.util.Pair;
 import com.android.apksig.internal.zip.ZipUtils;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.zip.ZipFormatException;
@@ -43,39 +42,7 @@ public class ApkUtilsLite {
      */
     public static ZipSections findZipSections(DataSource apk)
             throws IOException, ZipFormatException {
-        Pair<ByteBuffer, Long> eocdAndOffsetInFile =
-                ZipUtils.findZipEndOfCentralDirectoryRecord(apk);
-        if (eocdAndOffsetInFile == null) {
-            throw new ZipFormatException("ZIP End of Central Directory record not found");
-        }
-
-        ByteBuffer eocdBuf = eocdAndOffsetInFile.getFirst();
-        long eocdOffset = eocdAndOffsetInFile.getSecond();
-        eocdBuf.order(ByteOrder.LITTLE_ENDIAN);
-        long cdStartOffset = ZipUtils.getZipEocdCentralDirectoryOffset(eocdBuf);
-        if (cdStartOffset > eocdOffset) {
-            throw new ZipFormatException(
-                    "ZIP Central Directory start offset out of range: " + cdStartOffset
-                            + ". ZIP End of Central Directory offset: " + eocdOffset);
-        }
-
-        long cdSizeBytes = ZipUtils.getZipEocdCentralDirectorySizeBytes(eocdBuf);
-        long cdEndOffset = cdStartOffset + cdSizeBytes;
-        if (cdEndOffset > eocdOffset) {
-            throw new ZipFormatException(
-                    "ZIP Central Directory overlaps with End of Central Directory"
-                            + ". CD end: " + cdEndOffset
-                            + ", EoCD start: " + eocdOffset);
-        }
-
-        int cdRecordCount = ZipUtils.getZipEocdCentralDirectoryTotalRecordCount(eocdBuf);
-
-        return new ZipSections(
-                cdStartOffset,
-                cdSizeBytes,
-                cdRecordCount,
-                eocdOffset,
-                eocdBuf);
+        return ZipUtils.findZipSections(apk);
     }
 
     // See https://source.android.com/security/apksigning/v2.html

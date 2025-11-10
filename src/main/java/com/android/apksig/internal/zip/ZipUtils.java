@@ -46,12 +46,13 @@ public abstract class ZipUtils {
     public static final short GP_FLAG_DATA_DESCRIPTOR_USED = 0x08;
     public static final short GP_FLAG_EFS = 0x0800;
 
-    private static final int ZIP_EOCD_REC_MIN_SIZE = 22;
-    private static final int ZIP_EOCD_REC_SIG = 0x06054b50;
-    private static final int ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET = 10;
-    private static final int ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET = 12;
-    private static final int ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET = 16;
-    private static final int ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET = 20;
+    public static final int ZIP_EOCD_REC_MIN_SIZE = 22;
+    public static final int ZIP_EOCD_REC_SIG = 0x06054b50;
+    public static final int ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET = 10;
+    public static final int ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET = 12;
+    public static final int ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET = 16;
+    public static final int ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET = 20;
+    public static final int ZIP_EOCD_COMMENT_FIELD_OFFSET = 22;
 
     public static final int ZIP64_RECORD_ID = 0x1;
     public static final String ZIP64_UNCOMPRESSED_SIZE_FIELD_NAME = "uncompressedSize";
@@ -61,18 +62,74 @@ public abstract class ZipUtils {
     public static final int UINT16_MAX_VALUE = 0xffff;
     public static final long UINT32_MAX_VALUE = 0xffffffffL;
 
+    public static final int ZIP64_EOCD_LOCATOR_SIG = 0x07064b50;
+    public static final int ZIP64_EOCD_LOCATOR_SIZE = 20;
+    public static final int ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET = 8;
+
+    public static final int ZIP64_EOCD_REC_SIG = 0x06064b50;
+    public static final int ZIP64_EOCD_SIZE_OFFSET = 4;
+    public static final int ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET = 32;
+    public static final int ZIP64_EOCD_REC_CD_SIZE_FIELD_OFFSET = 40;
+    public static final int ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET = 48;
+    public static final int ZIP64_EOCD_REC_HEADER_SIZE = 12;
+
     /**
      * Sets the offset of the start of the ZIP Central Directory in the archive.
+     *
+     * <p>If the provided {@code zipEndOfCentralDirectory} is a zip64 end of central directory
+     * record, this will also update the offset in the zip64 end of central directory locator.
      *
      * <p>NOTE: Byte order of {@code zipEndOfCentralDirectory} must be little-endian.
      */
     public static void setZipEocdCentralDirectoryOffset(
             ByteBuffer zipEndOfCentralDirectory, long offset) {
         assertByteOrderLittleEndian(zipEndOfCentralDirectory);
-        setUnsignedInt32(
-                zipEndOfCentralDirectory,
-                zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET,
-                offset);
+        // Set the offset in the appropriate location based on whether this is a zip or zip64 EoCD.
+        if (isEocdZip64(zipEndOfCentralDirectory)) {
+            // Get the size of the zip64 EoCD to locate the zip64 EoCD locator.
+            zipEndOfCentralDirectory.position(0);
+            long zip64EocdLength =
+                    zipEndOfCentralDirectory.getLong(ZIP64_EOCD_SIZE_OFFSET)
+                            + ZIP64_EOCD_REC_HEADER_SIZE;
+            if (zip64EocdLength > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException(
+                        "Provided buffer is a zip64 EoCD, but the record length exceeds 2GB: "
+                                + "zipEocdLength: "
+                                + zip64EocdLength);
+            }
+            // Ensure that the buffer has enough space remaining for the EoCD locator.
+            if (zipEndOfCentralDirectory.remaining()
+                    < (zip64EocdLength + ZIP64_EOCD_LOCATOR_SIZE)) {
+                throw new IllegalArgumentException(
+                        "Provided buffer is a zip64 EoCD, but it does not contain the expected "
+                                + "zip64 EoCD locator; remaining: "
+                                + zipEndOfCentralDirectory.remaining());
+            }
+            int eocdLocatorSig = zipEndOfCentralDirectory.getInt((int) (zip64EocdLength));
+            if (eocdLocatorSig != ZIP64_EOCD_LOCATOR_SIG) {
+                throw new IllegalArgumentException(
+                        "Provided buffer is a zip64 EoCD, but it does not contain the expected "
+                                + "zip64 EoCD locator; signature: "
+                                + Integer.toHexString(eocdLocatorSig));
+            }
+            // Get the current central directory offset to determine the delta to be applied
+            // to the zip64 EoCD in the locator.
+            long delta =
+                    zipEndOfCentralDirectory.getLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET)
+                            - offset;
+            long zip64EocdOffset =
+                    zipEndOfCentralDirectory.getLong(
+                            (int) zip64EocdLength + ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET);
+            zipEndOfCentralDirectory.putLong(
+                    (int) zip64EocdLength + ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET,
+                    zip64EocdOffset - delta);
+            zipEndOfCentralDirectory.putLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET, offset);
+        } else {
+            setUnsignedInt32(
+                    zipEndOfCentralDirectory,
+                    zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET,
+                    offset);
+        }
     }
 
     /**
@@ -82,10 +139,47 @@ public abstract class ZipUtils {
      */
     public static void updateZipEocdCommentLen(ByteBuffer zipEndOfCentralDirectory) {
         assertByteOrderLittleEndian(zipEndOfCentralDirectory);
-        int commentLen = zipEndOfCentralDirectory.remaining() - ZIP_EOCD_REC_MIN_SIZE;
+        // If the provided end of central directory is not zip64, then the fields can be updated
+        // at the expected offset.
+        if (!isEocdZip64(zipEndOfCentralDirectory)) {
+            int commentLen = zipEndOfCentralDirectory.remaining() - ZIP_EOCD_REC_MIN_SIZE;
+            setUnsignedInt16(
+                    zipEndOfCentralDirectory,
+                    zipEndOfCentralDirectory.position() + ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET,
+                    commentLen);
+            return;
+        }
+        // The provided EoCD is zip64, first find the offset of the standard EoCD record in the
+        // provided buffer.
+        long zip64EocdLength =
+                zipEndOfCentralDirectory.getLong(ZIP64_EOCD_SIZE_OFFSET)
+                        + ZIP64_EOCD_REC_HEADER_SIZE;
+        // A java ByteBuffer can only hold 2GB, so ensure that the zip64 length is less than this.
+        if (zip64EocdLength > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "Provided buffer is a zip64 EoCD, but the record length exceeds 2GB: "
+                            + "zipEocdLength: "
+                            + zip64EocdLength);
+        }
+        int zipEocdOffset = (int) zip64EocdLength + ZIP64_EOCD_LOCATOR_SIZE;
+        // Verify the standard EoCD signature exists at the expected offset.
+        int zipEocdSig = zipEndOfCentralDirectory.getInt(zipEocdOffset);
+        if (zipEocdSig != ZIP_EOCD_REC_SIG) {
+            throw new IllegalArgumentException(
+                    "Provided buffer is a zip64 EoCD, but it does not contain a standard zip EoCD"
+                            + " at the expected location; zipEocdOffset: "
+                            + zipEocdOffset
+                            + ", zipEocdSig: "
+                            + Integer.toHexString(zipEocdSig));
+        }
+        int commentLen =
+                zipEndOfCentralDirectory.remaining()
+                        - ZIP_EOCD_REC_MIN_SIZE
+                        - (int) zip64EocdLength
+                        - ZIP64_EOCD_LOCATOR_SIZE;
         setUnsignedInt16(
                 zipEndOfCentralDirectory,
-                zipEndOfCentralDirectory.position() + ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET,
+                zipEocdOffset + ZIP_EOCD_COMMENT_LENGTH_FIELD_OFFSET,
                 commentLen);
     }
 
@@ -96,10 +190,34 @@ public abstract class ZipUtils {
      */
     public static long getZipEocdCentralDirectoryOffset(ByteBuffer zipEndOfCentralDirectory) {
         assertByteOrderLittleEndian(zipEndOfCentralDirectory);
-        return getUnsignedInt32(
-                zipEndOfCentralDirectory,
-                zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET);
+        if (isEocdZip64(zipEndOfCentralDirectory)) {
+            return zipEndOfCentralDirectory.getLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET);
+        } else {
+            return getUnsignedInt32(
+                    zipEndOfCentralDirectory,
+                    zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET);
+        }
     }
+
+    /**
+     * Returns whether the provided {@code zipEndOfCentralDirectory} is a zip64 End of Central
+     * Directory based on the signature in the buffer's first four bytes.
+     *
+     * <p>Note: This method should only be called after verifying that the provided {@link
+     * ByteBuffer} is in little-endian byte order.
+     */
+    public static boolean isEocdZip64(ByteBuffer zipEndOfCentralDirectory) {
+        int eocdSig = zipEndOfCentralDirectory.getInt(0);
+        if (eocdSig == ZIP64_EOCD_REC_SIG) {
+            return true;
+        } else if (eocdSig == ZIP_EOCD_REC_SIG) {
+            return false;
+        } else {
+            throw new IllegalArgumentException(
+                    "ByteBuffer is not a valid EoCD: signature=" + Integer.toHexString(eocdSig));
+        }
+    }
+
 
     /**
      * Returns the size (in bytes) of the ZIP Central Directory.
@@ -108,9 +226,13 @@ public abstract class ZipUtils {
      */
     public static long getZipEocdCentralDirectorySizeBytes(ByteBuffer zipEndOfCentralDirectory) {
         assertByteOrderLittleEndian(zipEndOfCentralDirectory);
-        return getUnsignedInt32(
-                zipEndOfCentralDirectory,
-                zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET);
+        if (isEocdZip64(zipEndOfCentralDirectory)) {
+            return zipEndOfCentralDirectory.getLong(ZIP64_EOCD_REC_CD_SIZE_FIELD_OFFSET);
+        } else {
+            return getUnsignedInt32(
+                    zipEndOfCentralDirectory,
+                    zipEndOfCentralDirectory.position() + ZIP_EOCD_CENTRAL_DIR_SIZE_FIELD_OFFSET);
+        }
     }
 
     /**
@@ -121,10 +243,119 @@ public abstract class ZipUtils {
     public static int getZipEocdCentralDirectoryTotalRecordCount(
             ByteBuffer zipEndOfCentralDirectory) {
         assertByteOrderLittleEndian(zipEndOfCentralDirectory);
-        return getUnsignedInt16(
-                zipEndOfCentralDirectory,
-                zipEndOfCentralDirectory.position()
-                        + ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET);
+        if (isEocdZip64(zipEndOfCentralDirectory)) {
+            long cdRecordCount =
+                    zipEndOfCentralDirectory.getLong(ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET);
+            // This is not a limitation of the zip specification, but it is intended to remain
+            // consistent with the limitation of this API. It is currently only used by this
+            // class internally, but it was exposed, so consider adding a method that returns
+            // a long instead.
+            if (cdRecordCount > Integer.MAX_VALUE) {
+                throw new IllegalArgumentException(
+                        "Central directory contains too many entries to fit in an int; "
+                                + "cdRecordCount: "
+                                + cdRecordCount);
+            }
+            return (int) cdRecordCount;
+        } else {
+            return getUnsignedInt16(
+                    zipEndOfCentralDirectory,
+                    zipEndOfCentralDirectory.position()
+                            + ZIP_EOCD_CENTRAL_DIR_TOTAL_RECORD_COUNT_OFFSET);
+        }
+    }
+
+    /**
+     * Finds the main ZIP sections of the provided {@code APK}.
+     *
+     * @throws IOException if an I/O error occurred while reading the APK
+     * @throws ZipFormatException if the APK is malformed
+     */
+    public static ZipSections findZipSections(DataSource apk)
+            throws IOException, ZipFormatException {
+        Pair<ByteBuffer, Long> eocdAndOffsetInFile = findZipEndOfCentralDirectoryRecord(apk);
+        if (eocdAndOffsetInFile == null) {
+            throw new ZipFormatException("ZIP End of Central Directory record not found");
+        }
+
+        ByteBuffer eocdBuf = eocdAndOffsetInFile.getFirst();
+        long eocdOffset = eocdAndOffsetInFile.getSecond();
+        eocdBuf.order(ByteOrder.LITTLE_ENDIAN);
+        long cdStartOffset = getZipEocdCentralDirectoryOffset(eocdBuf);
+        long cdSizeBytes = getZipEocdCentralDirectorySizeBytes(eocdBuf);
+        int cdRecordCount = getZipEocdCentralDirectoryTotalRecordCount(eocdBuf);
+
+        if ((cdStartOffset == UINT32_MAX_VALUE)
+                || (cdSizeBytes == UINT32_MAX_VALUE)
+                || (cdRecordCount == UINT16_MAX_VALUE)) {
+            // One of the fields contains a zip64 marker, but this could mean the field exactly
+            // matches that value. First check for the presence of both the zip64 EoCD locator
+            // and zip64 EoCD record.
+            long zip64EocdLocatorOffset = eocdOffset - ZIP64_EOCD_LOCATOR_SIZE;
+            if (zip64EocdLocatorOffset >= 0) {
+                ByteBuffer zip64EocdLocator =
+                        apk.getByteBuffer(zip64EocdLocatorOffset, ZIP64_EOCD_LOCATOR_SIZE);
+                zip64EocdLocator.order(ByteOrder.LITTLE_ENDIAN);
+                // If the offset for the zip64 EoCD locator does not have the expected signature,
+                // it likely indicates that any of the fields are set to exactly that max value.
+                if (zip64EocdLocator.getInt(0) == ZIP64_EOCD_LOCATOR_SIG) {
+                    long zip64EocdOffset =
+                            zip64EocdLocator.getLong(ZIP64_EOCD_LOCATOR_ZIP64_EOCD_OFFSET_OFFSET);
+                    // Read the zip64 EoCD from the zip64 EoCD offset to the end of the APK; this
+                    // contains all the EoCD records and will be used as the parameter to subsequent
+                    // EoCD calls.
+                    ByteBuffer zip64Eocd =
+                            apk.getByteBuffer(
+                                    zip64EocdOffset, (int) (apk.size() - zip64EocdOffset));
+                    zip64Eocd.order(ByteOrder.LITTLE_ENDIAN);
+                    // While less likely, it's possible that the bytes at the offset of the zip64
+                    // EoCD locator were equal to the signature, but it's not actually a zip64 APK.
+                    if (zip64Eocd.getInt(0) == ZIP64_EOCD_REC_SIG) {
+                        long zip64CdRecordCount =
+                                zip64Eocd.getLong(ZIP64_EOCD_REC_TOTAL_RECORD_COUNT_OFFSET);
+                        // This is not a limitation of the zip specification but of the existing
+                        // ZipSections class; if this limit is ever reached, this will need to be
+                        // refactored.
+                        if (zip64CdRecordCount > Integer.MAX_VALUE) {
+                            throw new IllegalArgumentException(
+                                    "Central directory contains too many entries to fit in an int; "
+                                            + "cdRecordCount: "
+                                            + cdRecordCount);
+                        }
+                        cdRecordCount = (int) zip64CdRecordCount;
+                        cdSizeBytes = zip64Eocd.getLong(ZIP64_EOCD_REC_CD_SIZE_FIELD_OFFSET);
+                        cdStartOffset =
+                                zip64Eocd.getLong(ZIP64_EOCD_CENTRAL_DIR_OFFSET_FIELD_OFFSET);
+                        return new ZipSections(
+                                cdStartOffset,
+                                cdSizeBytes,
+                                cdRecordCount,
+                                zip64EocdOffset,
+                                zip64Eocd);
+                    }
+                }
+            }
+        }
+
+        if (cdStartOffset > eocdOffset) {
+            throw new ZipFormatException(
+                    "ZIP Central Directory start offset out of range: "
+                            + cdStartOffset
+                            + ". ZIP End of Central Directory offset: "
+                            + eocdOffset);
+        }
+
+        long cdEndOffset = cdStartOffset + cdSizeBytes;
+        if (cdEndOffset > eocdOffset) {
+            throw new ZipFormatException(
+                    "ZIP Central Directory overlaps with End of Central Directory"
+                            + ". CD end: "
+                            + cdEndOffset
+                            + ", EoCD start: "
+                            + eocdOffset);
+        }
+
+        return new ZipSections(cdStartOffset, cdSizeBytes, cdRecordCount, eocdOffset, eocdBuf);
     }
 
     /**
@@ -432,7 +663,7 @@ public abstract class ZipUtils {
         buffer.putShort((short) value);
     }
 
-    static long getUnsignedInt32(ByteBuffer buffer, int offset) {
+    public static long getUnsignedInt32(ByteBuffer buffer, int offset) {
         return buffer.getInt(offset) & 0xffffffffL;
     }
 

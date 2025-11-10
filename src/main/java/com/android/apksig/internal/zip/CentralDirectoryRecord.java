@@ -42,13 +42,17 @@ public class CentralDirectoryRecord {
     public static final Comparator<CentralDirectoryRecord> BY_LOCAL_FILE_HEADER_OFFSET_COMPARATOR =
             new ByLocalFileHeaderOffsetComparator();
 
-    private static final int RECORD_SIGNATURE = 0x02014b50;
-    private static final int HEADER_SIZE_BYTES = 46;
+    public static final int RECORD_SIGNATURE = 0x02014b50;
+    public static final int HEADER_SIZE_BYTES = 46;
 
-    private static final int GP_FLAGS_OFFSET = 8;
-    private static final int LOCAL_FILE_HEADER_OFFSET_OFFSET = 42;
-    private static final int EXTRA_FIELD_OFFSET = 46;
-    private static final int NAME_OFFSET = HEADER_SIZE_BYTES;
+    public static final int VERSION_MADE_BY_OFFSET = 4;
+    public static final int VERSION_NEEDED_OFFSET = 6;
+    public static final int GP_FLAGS_OFFSET = 8;
+    public static final int LOCAL_FILE_HEADER_OFFSET_OFFSET = 42;
+    public static final int EXTRA_FIELD_OFFSET = 46;
+    public static final int NAME_OFFSET = HEADER_SIZE_BYTES;
+    public static final int MIN_VERSION_SUPPORT_DEFLATE_COMPRESSION = 20;
+    public static final int MIN_VERSION_SUPPORT_ZIP64 = 45;
 
     private final ByteBuffer mData;
     private final short mGpFlags;
@@ -237,23 +241,22 @@ public class CentralDirectoryRecord {
 
     public CentralDirectoryRecord createWithModifiedLocalFileHeaderOffset(
             long localFileHeaderOffset) {
-        ByteBuffer result = ByteBuffer.allocate(mData.remaining());
-        result.put(mData.slice());
-        result.flip();
-        result.order(ByteOrder.LITTLE_ENDIAN);
-        ZipUtils.setUnsignedInt32(result, LOCAL_FILE_HEADER_OFFSET_OFFSET, localFileHeaderOffset);
-        return new CentralDirectoryRecord(
-                result,
-                mGpFlags,
-                mCompressionMethod,
+        mData.order(ByteOrder.LITTLE_ENDIAN);
+        int versionMadeBy = ZipUtils.getUnsignedInt16(mData, VERSION_MADE_BY_OFFSET);
+        int versionNeeded = ZipUtils.getUnsignedInt16(mData, VERSION_NEEDED_OFFSET);
+        return createWithModifiedData(
+                mName,
                 mLastModificationTime,
                 mLastModificationDate,
                 mCrc32,
                 mCompressedSize,
                 mUncompressedSize,
                 localFileHeaderOffset,
-                mName,
-                mNameSizeBytes);
+                mGpFlags,
+                mCompressionMethod,
+                versionMadeBy,
+                versionNeeded,
+                mData);
     }
 
     public static CentralDirectoryRecord createWithDeflateCompressedData(
@@ -264,41 +267,127 @@ public class CentralDirectoryRecord {
             long compressedSize,
             long uncompressedSize,
             long localFileHeaderOffset) {
-        byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
-        short gpFlags = ZipUtils.GP_FLAG_EFS; // UTF-8 character encoding used for entry name
-        short compressionMethod = ZipUtils.COMPRESSION_METHOD_DEFLATED;
-        int recordSize = HEADER_SIZE_BYTES + nameBytes.length;
-        ByteBuffer result = ByteBuffer.allocate(recordSize);
-        result.order(ByteOrder.LITTLE_ENDIAN);
-        result.putInt(RECORD_SIGNATURE);
-        ZipUtils.putUnsignedInt16(result, 0x14); // Version made by
-        ZipUtils.putUnsignedInt16(result, 0x14); // Minimum version needed to extract
-        result.putShort(gpFlags);
-        result.putShort(compressionMethod);
-        ZipUtils.putUnsignedInt16(result, lastModifiedTime);
-        ZipUtils.putUnsignedInt16(result, lastModifiedDate);
-        ZipUtils.putUnsignedInt32(result, crc32);
-        ZipUtils.putUnsignedInt32(result, compressedSize);
-        ZipUtils.putUnsignedInt32(result, uncompressedSize);
-        ZipUtils.putUnsignedInt16(result, nameBytes.length);
-        ZipUtils.putUnsignedInt16(result, 0); // Extra field length
-        ZipUtils.putUnsignedInt16(result, 0); // File comment length
-        ZipUtils.putUnsignedInt16(result, 0); // Disk number
-        ZipUtils.putUnsignedInt16(result, 0); // Internal file attributes
-        ZipUtils.putUnsignedInt32(result, 0); // External file attributes
-        ZipUtils.putUnsignedInt32(result, localFileHeaderOffset);
-        result.put(nameBytes);
+        return createWithModifiedData(
+                name,
+                lastModifiedTime,
+                lastModifiedDate,
+                crc32,
+                compressedSize,
+                uncompressedSize,
+                localFileHeaderOffset,
+                ZipUtils.GP_FLAG_EFS, // UTF-8 character encoding used for entry name
+                ZipUtils.COMPRESSION_METHOD_DEFLATED,
+                MIN_VERSION_SUPPORT_DEFLATE_COMPRESSION,
+                MIN_VERSION_SUPPORT_DEFLATE_COMPRESSION,
+                null);
+    }
 
-        if (result.hasRemaining()) {
-            throw new RuntimeException("pos: " + result.position() + ", limit: " + result.limit());
+    private static CentralDirectoryRecord createWithModifiedData(
+            String name,
+            int lastModificationTime,
+            int lastModificationDate,
+            long crc32,
+            long compressedSize,
+            long uncompressedSize,
+            long localFileHeaderOffset,
+            short gpFlags,
+            short compressionMethod,
+            int versionMadeBy,
+            int versionNeeded,
+            ByteBuffer data) {
+        byte[] nameBytes = name.getBytes(StandardCharsets.UTF_8);
+        boolean isUncompressedSizeZip64 = uncompressedSize >= UINT32_MAX_VALUE;
+        boolean isCompressedSizeZip64 = compressedSize >= UINT32_MAX_VALUE;
+        boolean isLfhOffsetZip64 = localFileHeaderOffset >= UINT32_MAX_VALUE;
+
+        boolean needsZip64 = isUncompressedSizeZip64 || isCompressedSizeZip64 || isLfhOffsetZip64;
+        ByteBuffer extra;
+        if (needsZip64) {
+            // Since zip64 is required, the record needs to be rebuilt to include the zip64
+            // extra block. The fields within the extra block must be written in order based on
+            // which are beyond the standard zip limits.
+            int payloadSize = 0;
+            if (isUncompressedSizeZip64) {
+                payloadSize += 8;
+            }
+            if (isCompressedSizeZip64) {
+                payloadSize += 8;
+            }
+            if (isLfhOffsetZip64) {
+                payloadSize += 8;
+            }
+            extra = ByteBuffer.allocate(4 + payloadSize);
+            extra.order(ByteOrder.LITTLE_ENDIAN);
+            ZipUtils.putUnsignedInt16(extra, ZipUtils.ZIP64_RECORD_ID);
+            ZipUtils.putUnsignedInt16(extra, payloadSize);
+            // Below is the required order of the payload values according to the spec.
+            if (isUncompressedSizeZip64) {
+                extra.putLong(uncompressedSize);
+            }
+            if (isCompressedSizeZip64) {
+                extra.putLong(compressedSize);
+            }
+            if (isLfhOffsetZip64) {
+                extra.putLong(localFileHeaderOffset);
+            }
+            extra.flip();
+        } else {
+            extra = ByteBuffer.allocate(0);
         }
-        result.flip();
+
+        ByteBuffer result;
+        if (!needsZip64 && data != null) {
+            // If the record does not require zip64 and the original record was included, just
+            // modify the existing record to reflect the local file header offset to minimize
+            // changes to the existing file.
+            result = ByteBuffer.allocate(data.remaining());
+            result.put(data.slice());
+            result.flip();
+            result.order(ByteOrder.LITTLE_ENDIAN);
+            ZipUtils.setUnsignedInt32(
+                    result, LOCAL_FILE_HEADER_OFFSET_OFFSET, localFileHeaderOffset);
+        } else {
+            int recordSize = HEADER_SIZE_BYTES + nameBytes.length + extra.remaining();
+            result = ByteBuffer.allocate(recordSize);
+            result.order(ByteOrder.LITTLE_ENDIAN);
+            result.putInt(RECORD_SIGNATURE);
+            // Version 45 of the zip specification introduced support for zip64.
+            ZipUtils.putUnsignedInt16(
+                    result, needsZip64 ? MIN_VERSION_SUPPORT_ZIP64 : versionMadeBy);
+            ZipUtils.putUnsignedInt16(
+                    result, needsZip64 ? MIN_VERSION_SUPPORT_ZIP64 : versionNeeded);
+            ZipUtils.putUnsignedInt16(result, gpFlags);
+            ZipUtils.putUnsignedInt16(result, compressionMethod);
+            ZipUtils.putUnsignedInt16(result, lastModificationTime);
+            ZipUtils.putUnsignedInt16(result, lastModificationDate);
+            ZipUtils.putUnsignedInt32(result, crc32);
+            ZipUtils.putUnsignedInt32(
+                    result, isCompressedSizeZip64 ? UINT32_MAX_VALUE : compressedSize);
+            ZipUtils.putUnsignedInt32(
+                    result, isUncompressedSizeZip64 ? UINT32_MAX_VALUE : uncompressedSize);
+            ZipUtils.putUnsignedInt16(result, nameBytes.length);
+            ZipUtils.putUnsignedInt16(result, extra.remaining());
+            ZipUtils.putUnsignedInt16(result, 0); // File comment length
+            ZipUtils.putUnsignedInt16(result, 0); // Disk number
+            ZipUtils.putUnsignedInt16(result, 0); // Internal file attributes
+            ZipUtils.putUnsignedInt32(result, 0); // External file attributes
+            ZipUtils.putUnsignedInt32(
+                    result, isLfhOffsetZip64 ? UINT32_MAX_VALUE : localFileHeaderOffset);
+            result.put(nameBytes);
+            result.put(extra);
+            if (result.hasRemaining()) {
+                throw new RuntimeException(
+                        "pos: " + result.position() + ", limit: " + result.limit());
+            }
+            result.flip();
+        }
+
         return new CentralDirectoryRecord(
                 result,
                 gpFlags,
                 compressionMethod,
-                lastModifiedTime,
-                lastModifiedDate,
+                lastModificationTime,
+                lastModificationDate,
                 crc32,
                 compressedSize,
                 uncompressedSize,
