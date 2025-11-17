@@ -33,7 +33,7 @@ license {
     ],
 }
 
-java_library_host {
+java_library {
     name: "apksig",
     srcs: ["src/main/java/**/*.java"],
     exclude_srcs: [
@@ -41,11 +41,15 @@ java_library_host {
         "src/main/java/com/android/apksig/kms/gcp/**/*.java",
     ],
     java_version: "1.8",
+    host_supported: true,
     target: {
         windows: {
             enabled: true,
         },
     },
+    sdk_version: "current",
+    min_sdk_version: "36",
+    apex_available: ["com.android.webapp"],
 }
 
 java_library_host {
