@@ -59,6 +59,10 @@ public final class Resources {
     public static final String THIRD_RSA_2048_SIGNER_RESOURCE_NAME = "rsa-2048_3";
     public static final String FIRST_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024";
     public static final String SECOND_RSA_1024_SIGNER_RESOURCE_NAME = "rsa-1024_2";
+    // Separate resources will be maintained for resources created by conscrypt vs openssl since
+    // Bouncy Castle cannot currently parse some resources created by conscrypt.
+    public static final String ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME = "mldsa-65-conscrypt";
+    public static final String ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME = "mldsa-87-conscrypt";
 
     // This resource uses a PEM certificate file containing the certificate chain with both the
     // first and second RSA-2048 signers. This resource should be used for any tests that require
@@ -164,6 +168,9 @@ public final class Resources {
                 break;
             case "EC":
                 keyFactory = KeyFactory.getInstance("ec");
+                break;
+            case "MLDSA":
+                keyFactory = KeyFactory.getInstance("ml-dsa");
                 break;
             default:
                 throw new InvalidKeySpecException("Unsupported key algorithm: " + keyAlgorithm);

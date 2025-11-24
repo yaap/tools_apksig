@@ -71,4 +71,10 @@ public abstract class AndroidSdkVersion {
 
     /** Android Upside Down Cake. */
     public static final int U = 34;
+
+    /** Android V. */
+    public static final int V = 35;
+
+    /** Android B. */
+    public static final int B = 36;
 }

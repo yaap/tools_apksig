@@ -138,6 +138,10 @@ public abstract class V2SchemeSigner {
                 // digest being the weak link. SHA-512 is the next strongest supported digest.
                 return Collections.singletonList(SignatureAlgorithm.ECDSA_WITH_SHA512);
             }
+        } else if ("ML-DSA".equalsIgnoreCase(keyAlgorithm)) {
+            List<SignatureAlgorithm> algorithms = new ArrayList<>();
+            algorithms.add(SignatureAlgorithm.ML_DSA);
+            return algorithms;
         } else {
             throw new InvalidKeyException("Unsupported key algorithm: " + keyAlgorithm);
         }

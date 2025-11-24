@@ -569,7 +569,11 @@ public class SignerParams {
             return KeyFactory.getInstance("DSA").generatePrivate(spec);
         } catch (InvalidKeySpecException expected) {
         }
-        throw new InvalidKeySpecException("Not an RSA, EC, or DSA private key");
+        try {
+            return KeyFactory.getInstance("ML-DSA").generatePrivate(spec);
+        } catch (InvalidKeySpecException expected) {
+        }
+        throw new InvalidKeySpecException("Not an RSA, EC, DSA, or ML-DSA private key");
     }
 
     private static byte[] readFully(File file) throws IOException {
