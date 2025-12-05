@@ -57,10 +57,10 @@ public class V3SchemeConstants {
      * The current development release; rotation / signing configs targeting this release should
      * be written with the {@link #PROD_RELEASE} SDK version and the dev release attribute.
      */
-    public static final int DEV_RELEASE = AndroidSdkVersion.U;
+    public static final int DEV_RELEASE = AndroidSdkVersion.C;
 
     /**
      * The current production release.
      */
-    public static final int PROD_RELEASE = AndroidSdkVersion.T;
+    public static final int PROD_RELEASE = AndroidSdkVersion.B;
 }

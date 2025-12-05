@@ -538,6 +538,14 @@ public class SigningCertificateLineage {
         }
     }
 
+    /**
+     * Returns the minimum SDK version that will support all of the signature algorithms contained
+     * within the lineage nodes.
+     */
+    public int getMinimumSupportedSdkVersion() {
+        return calculateMinSdkVersion(mSigningLineage);
+    }
+
     private static int calculateMinSdkVersion(List<SigningCertificateNode> nodes) {
         if (nodes == null) {
             throw new IllegalArgumentException("Can't calculate minimum SDK version of null nodes");

@@ -400,17 +400,10 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     config.maxSdkVersion = prevSigner.minSdkVersion;
                 } else {
                     config.maxSdkVersion = currentMinSdk - 1;
+                    if (config.maxSdkVersion < config.minSdkVersion) {
+                        continue;
+                    }
                 }
-            }
-            if (config.minSdkVersion == V3SchemeConstants.DEV_RELEASE) {
-                // If the current signer is targeting the current development release, then set
-                // the signer's minSdkVersion to the last production release and the flag indicating
-                // this signer is targeting a dev release.
-                config.minSdkVersion = V3SchemeConstants.PROD_RELEASE;
-                config.signerTargetsDevRelease = true;
-            } else if (config.minSdkVersion == 0) {
-                config.minSdkVersion = getMinSdkFromV3SignatureAlgorithms(
-                        config.signatureAlgorithms);
             }
             // Truncate the lineage to the current signer if it is not the latest signer.
             X509Certificate signerCert = config.certificates.get(0);
@@ -418,6 +411,20 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     && !config.signingCertificateLineage.isCertificateLatestInLineage(signerCert)) {
                 config.signingCertificateLineage = config.signingCertificateLineage.getSubLineage(
                         signerCert);
+            }
+            int algorithmMinSdkVersion = getMinSdkFromV3SignerConfig(config);
+            // Ensure that the targeted SDK version for the signer is at least the platform SDK
+            // version for which support is available. This is primarily intended for PQC signature
+            // algorithms for which support was added after the V3 signature scheme.
+            if (config.minSdkVersion == 0 || config.minSdkVersion < algorithmMinSdkVersion) {
+                config.minSdkVersion = algorithmMinSdkVersion;
+            }
+            if (config.minSdkVersion == V3SchemeConstants.DEV_RELEASE) {
+                // If the current signer is targeting the current development release, then set
+                // the signer's minSdkVersion to the last production release and the flag indicating
+                // this signer is targeting a dev release.
+                config.minSdkVersion = V3SchemeConstants.PROD_RELEASE;
+                config.signerTargetsDevRelease = true;
             }
             // we know that this config will be used, so add it to our result, order doesn't matter
             // at this point
@@ -519,18 +526,25 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         return config;
     }
 
-    private int getMinSdkFromV3SignatureAlgorithms(List<SignatureAlgorithm> algorithms) {
+    private int getMinSdkFromV3SignerConfig(ApkSigningBlockUtils.SignerConfig signerConfig) {
         int min = Integer.MAX_VALUE;
-        for (SignatureAlgorithm algorithm : algorithms) {
+        for (SignatureAlgorithm algorithm : signerConfig.signatureAlgorithms) {
             int current = algorithm.getMinSdkVersion();
             if (current < min) {
+                min = current;
                 if (current <= mMinSdkVersion || current <= AndroidSdkVersion.P) {
                     // this algorithm satisfies all of our needs, no need to keep looking
-                    return current;
-                } else {
-                    min = current;
+                    break;
                 }
             }
+        }
+        if (signerConfig.signingCertificateLineage != null) {
+            // Take the max of the two in case the lineage contains a signer that's only supported
+            // on a later release than the current signer.
+            min =
+                    Math.max(
+                            min,
+                            signerConfig.signingCertificateLineage.getMinimumSupportedSdkVersion());
         }
         return min;
     }
@@ -2033,19 +2047,50 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                                     + "provided SigningCertificateLineage",
                             e);
                 }
-                // Get the last signer in the lineage, create a new targeted signer from it,
-                // and add it as a targeted signer config.
-                SignerConfig rotatedSignerConfig = mSignerConfigs.remove(mSignerConfigs.size() - 1);
-                SignerConfig.Builder rotatedConfigBuilder =
-                        new SignerConfig.Builder(
-                                rotatedSignerConfig.getName(),
-                                rotatedSignerConfig.getKeyConfig(),
-                                rotatedSignerConfig.getCertificates(),
-                                rotatedSignerConfig.getDeterministicDsaSigning());
-                rotatedConfigBuilder.setLineageForMinSdkVersion(mSigningCertificateLineage,
-                        mRotationMinSdkVersion);
-                rotatedConfigBuilder.setSignerTargetsDevRelease(mRotationTargetsDevRelease);
-                mTargetedSignerConfigs.add(0, rotatedConfigBuilder.build());
+                // When there are multiple rotated signing configs provided, it is possible that
+                // the latest will target a release later than the mRotationMinSdkVersion. All
+                // signers after the original should be updated to use the mRotationMinSdkVersion
+                // if they don't already have a target specified to ensure they can target the
+                // appropriate SDK version in the V3.1 block.
+                // Check if the first signer after sorting is the original signer or should
+                // be used as a targeted config.
+                SigningCertificateLineage subLineage =
+                        mSigningCertificateLineage.getSubLineage(
+                                mSignerConfigs.get(0).getCertificates().get(0));
+                int startIndex = 0;
+                List<SignerConfig> originalSignerConfig = new ArrayList<>();
+                if (subLineage.size() == 1) {
+                    startIndex = 1;
+                    originalSignerConfig.add(mSignerConfigs.get(0));
+                }
+                for (int i = startIndex; i < mSignerConfigs.size(); i++) {
+                    SignerConfig rotatedSignerConfig = mSignerConfigs.get(i);
+                    SignerConfig.Builder rotatedConfigBuilder =
+                            new SignerConfig.Builder(
+                                    rotatedSignerConfig.getName(),
+                                    rotatedSignerConfig.getKeyConfig(),
+                                    rotatedSignerConfig.getCertificates(),
+                                    rotatedSignerConfig.getDeterministicDsaSigning());
+                    int rotationMinSdkVersion =
+                            rotatedSignerConfig.getMinSdkVersion() == 0
+                                    ? mRotationMinSdkVersion
+                                    : rotatedSignerConfig.getMinSdkVersion();
+                    SigningCertificateLineage targetedLineage =
+                            rotatedSignerConfig.getSigningCertificateLineage() != null
+                                    ? rotatedSignerConfig.getSigningCertificateLineage()
+                                    : mSigningCertificateLineage;
+                    rotatedConfigBuilder.setLineageForMinSdkVersion(
+                            targetedLineage, rotationMinSdkVersion);
+                    // If this is the last signer, then use the provided value for targeting a
+                    // development release.
+                    if (i == (mSignerConfigs.size() - 1)) {
+                        rotatedConfigBuilder.setSignerTargetsDevRelease(mRotationTargetsDevRelease);
+                    }
+                    mTargetedSignerConfigs.add(rotatedConfigBuilder.build());
+                }
+                mTargetedSignerConfigs.sort(
+                        (c1, c2) -> Integer.compare(c1.getMinSdkVersion(), c2.getMinSdkVersion()));
+                mSignerConfigs = originalSignerConfig;
             }
             mSigningCertificateLineage = mergeTargetedSigningConfigLineages();
         }
@@ -2098,8 +2143,10 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 if (signerMinSdkVersion < AndroidSdkVersion.T) {
                     signerMinSdkVersion = AndroidSdkVersion.P;
                 }
-                // Ensure there are no SignerConfigs targeting the same SDK version.
-                if (signerMinSdkVersion == prevSdkVersion) {
+                // Ensure there are no SignerConfigs targeting the same SDK version that is not
+                // the minimum version for rotation.
+                if (signerMinSdkVersion == prevSdkVersion
+                        && prevSdkVersion != mRotationMinSdkVersion) {
                     throw new IllegalStateException(
                             "Multiple SignerConfigs were found targeting SDK version "
                                     + signerMinSdkVersion);

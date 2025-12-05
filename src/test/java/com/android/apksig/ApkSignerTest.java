@@ -1246,7 +1246,7 @@ public class ApkSignerTest {
                                 "original-minSdk36.apk",
                                 new ApkSigner.Builder(mlDsaSignerConfig)
                                         .setV4SigningEnabled(false));
-                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.B));
+                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.C));
 
                 // Verify that signing works when only V2 is specified; since a minSdkVersion of
                 // the target for PQC will never verify the V2 scheme, this test is intended to
@@ -1259,8 +1259,131 @@ public class ApkSignerTest {
                                         .setV2SigningEnabled(true)
                                         .setV3SigningEnabled(false)
                                         .setV4SigningEnabled(false));
-                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.B));
+                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.C));
             }
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testRotationToMlDsaTargetsReleaseWithMlDsaSupport() throws Exception {
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkSigner.SignerConfig firstSigner =
+                    getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+            ApkSigner.SignerConfig secondSigner =
+                    getDefaultSignerConfigFromResources(ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            SigningCertificateLineage lineage = Resources.toSigningCertificateLineage(getClass(),
+                    "rsa-mldsa-lineage-2-signers");
+            List<ApkSigner.SignerConfig> signers = Arrays.asList(firstSigner, secondSigner);
+
+            File signedApk = sign(
+                    "original.apk",
+                    new ApkSigner.Builder(signers)
+                            .setV1SigningEnabled(true)
+                            .setV2SigningEnabled(true)
+                            .setV3SigningEnabled(true)
+                            .setV4SigningEnabled(false)
+                            .setSigningCertificateLineage(lineage));
+
+            ApkVerifier.Result result = verify(signedApk, null);
+            assertVerified(result);
+            assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertV31SignerTargetsMinApiLevel(result, ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                    AndroidSdkVersion.C);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testRotationWithMlDsaInLineageTargetsReleaseWithMlDsaSupport() throws Exception {
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            // Once a PQC signer is in the lineage, any signing config with the updated lineage
+            // can only target a minimum of the first release that added support, even if the signer
+            // was reverted to a classical signer. This test verifies that a lineage that has an
+            // ML-DSA signer in the history still targets the first release that included ML-DSA
+            // support even though the current signer is a classical signer.
+            ApkSigner.SignerConfig firstSigner =
+                    getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+            ApkSigner.SignerConfig fourthSigner =
+                    getDefaultSignerConfigFromResources(THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+            SigningCertificateLineage lineage = Resources.toSigningCertificateLineage(getClass(),
+                    "rsa-rsa-mldsa-rsa-lineage-4-signers");
+            List<ApkSigner.SignerConfig> signers = Arrays.asList(firstSigner, fourthSigner);
+
+            File signedApk = sign(
+                    "original.apk",
+                    new ApkSigner.Builder(signers)
+                            .setV1SigningEnabled(true)
+                            .setV2SigningEnabled(true)
+                            .setV3SigningEnabled(true)
+                            .setV4SigningEnabled(false)
+                            .setSigningCertificateLineage(lineage));
+
+            ApkVerifier.Result result = verify(signedApk, null);
+            assertVerified(result);
+            assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                    THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+            assertV31SignerTargetsMinApiLevel(result, THIRD_RSA_2048_SIGNER_RESOURCE_NAME,
+                    AndroidSdkVersion.C);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testRotationWithMlDsaAndRsaRotatedSignerTargetsMinRotationSdkVersion()
+            throws Exception {
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            // When rotating to a PQC signer, the previous rotated key should still be specified to
+            // support all releases from the rotation SDK version to the version with PQC support.
+            // In this case, the rotated RSA signer should still be specified and should target
+            // Android T which is used by default for rotations.
+            ApkSigner.SignerConfig firstSigner =
+                    getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+            ApkSigner.SignerConfig secondSigner =
+                    getDefaultSignerConfigFromResources(SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+            ApkSigner.SignerConfig thirdSigner =
+                    getDefaultSignerConfigFromResources(ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            SigningCertificateLineage lineage = Resources.toSigningCertificateLineage(getClass(),
+                    "rsa-rsa-mldsa-lineage-3-signers");
+            List<ApkSigner.SignerConfig> signers = Arrays.asList(firstSigner, secondSigner,
+                    thirdSigner);
+
+            File signedApk = sign(
+                    "original.apk",
+                    new ApkSigner.Builder(signers)
+                            .setV1SigningEnabled(true)
+                            .setV2SigningEnabled(true)
+                            .setV3SigningEnabled(true)
+                            .setV4SigningEnabled(false)
+                            .setSigningCertificateLineage(lineage));
+
+            ApkVerifier.Result result = verify(signedApk, null);
+            assertVerified(result);
+            assertResultContainsSigners(result, true, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME, ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertV31SignerTargetsMinApiLevel(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                    AndroidSdkVersion.T);
+            assertV31SignerTargetsMinApiLevel(result, ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                    AndroidSdkVersion.C);
         } finally {
             Security.removeProvider(conscryptProvider.getName());
         }
@@ -2873,10 +2996,16 @@ public class ApkSignerTest {
     }
 
     @Test
-    public void testV31_twoTargetedSigningConfigsTargetT_throwsException() throws Exception {
+    public void testV31_twoTargetedSigningConfigsTargetU_throwsException() throws Exception {
         // The V3.1 signature scheme does not support multiple targeted signers targeting the same
         // SDK version; this test ensures an Exception is thrown if the caller specifies multiple
         // signers targeting the same release.
+        // Note, to support PQC signing where a PQC signer may target a later platform release, all
+        // specified rotated signers that don't have an explicit targeted SDK version set will
+        // default to the minimum SDK version for rotation, then during the signing, the PQC signer
+        // will be updated with the first SDK version which supported the PQC scheme. Because of
+        // this, the multiple signers need to target an SDK version other than the default for the
+        // V3.1 scheme to hit the expected exception.
         SigningCertificateLineage lineageTargetT =
                 Resources.toSigningCertificateLineage(
                         ApkSignerTest.class, LINEAGE_RSA_2048_2_SIGNERS_RESOURCE_NAME);
@@ -2885,13 +3014,13 @@ public class ApkSignerTest {
                         ApkSignerTest.class, LINEAGE_RSA_2048_3_SIGNERS_RESOURCE_NAME);
         ApkSigner.SignerConfig originalSigner = getDefaultSignerConfigFromResources(
                 FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
-        ApkSigner.SignerConfig signerTargetT = getDefaultSignerConfigFromResources(
-                SECOND_RSA_2048_SIGNER_RESOURCE_NAME, false, AndroidSdkVersion.T, lineageTargetT);
-        ApkSigner.SignerConfig secondSignerTargetT = getDefaultSignerConfigFromResources(
-                THIRD_RSA_2048_SIGNER_RESOURCE_NAME, false, AndroidSdkVersion.T,
+        ApkSigner.SignerConfig signerTargetU = getDefaultSignerConfigFromResources(
+                SECOND_RSA_2048_SIGNER_RESOURCE_NAME, false, AndroidSdkVersion.U, lineageTargetT);
+        ApkSigner.SignerConfig secondSignerTargetU = getDefaultSignerConfigFromResources(
+                THIRD_RSA_2048_SIGNER_RESOURCE_NAME, false, AndroidSdkVersion.U,
                 secondLineageTargetT);
-        List<ApkSigner.SignerConfig> signerConfigs = Arrays.asList(originalSigner, signerTargetT,
-                secondSignerTargetT);
+        List<ApkSigner.SignerConfig> signerConfigs = Arrays.asList(originalSigner, signerTargetU,
+                secondSignerTargetU);
 
         assertThrows(IllegalStateException.class, () -> sign("original.apk",
                 new ApkSigner.Builder(signerConfigs)

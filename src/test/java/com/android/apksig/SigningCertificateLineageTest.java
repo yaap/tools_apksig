@@ -16,8 +16,12 @@
 
 package com.android.apksig;
 
+import static com.android.apksig.internal.util.Resources.EC_P256_2_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.EC_P256_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_1024_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_1024_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 // BEGIN-AOSP
@@ -38,6 +42,7 @@ import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
 import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.apk.v3.V3SchemeSigner;
+import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.ByteBufferUtils;
 import com.android.apksig.internal.util.Resources;
 // BEGIN-AOSP
@@ -49,6 +54,7 @@ import com.android.apksig.kms.gcp.KeyRingClient;
 import com.android.apksig.util.DataSource;
 
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
@@ -57,6 +63,8 @@ import java.io.File;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.security.PrivateKey;
+import java.security.Provider;
+import java.security.Security;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -1062,6 +1070,88 @@ public class SigningCertificateLineageTest {
                 SECOND_RSA_2048_SIGNER_RESOURCE_NAME, THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
         assertLineageContainsExpectedSigners(mergedLineage2, FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
                 SECOND_RSA_2048_SIGNER_RESOURCE_NAME, THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+    }
+
+    @Test
+    public void getMinimumSupportedSdkVersion_rsaNodes_returnsMinForRsa() throws Exception {
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                        SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                        THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
+
+        assertEquals(AndroidSdkVersion.P, lineage.getMinimumSupportedSdkVersion());
+    }
+
+    @Test
+    public void getMinimumSupportedSdkVersion_ecNodes_returnsMinForEc() throws Exception {
+        SigningCertificateLineage lineage =
+                createLineageWithSignersFromResources(
+                        EC_P256_SIGNER_RESOURCE_NAME, EC_P256_2_SIGNER_RESOURCE_NAME);
+
+        assertEquals(AndroidSdkVersion.P, lineage.getMinimumSupportedSdkVersion());
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void getMinimumSupportedSdkVersion_mlDsaNodes_returnsMinForMlDsa() throws Exception {
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            SigningCertificateLineage lineage =
+                    createLineageWithSignersFromResources(
+                            ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                            ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME);
+
+            assertEquals(AndroidSdkVersion.C, lineage.getMinimumSupportedSdkVersion());
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void getMinimumSupportedSdkVersion_lastNodeMlDsa_returnsMinForRsa() throws Exception {
+        // Since the last node in the lineage does not have anything to sign, it will not have
+        // a value set for its signature algorithm. If the new PQC algorithm is the last signer,
+        // then the method should return the minimum supported level for the previous signers
+        // which should be Android P for RSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            SigningCertificateLineage lineage =
+                    createLineageWithSignersFromResources(
+                            FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                            SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                            ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+
+            assertEquals(AndroidSdkVersion.P, lineage.getMinimumSupportedSdkVersion());
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void getMinimumSupportedSdkVersion_middleNodeMlDsa_returnsMinForMlDsa()
+            throws Exception {
+        // If a signing config rotates to an ML-DSA key but then rotates back to a classical
+        // signer, the ML-DSA signer will remain in the lineage. Even though the classical signer
+        // will work on previous platform releases, the ML-DSA signer in the lineage requires that
+        // a signing config with this lineage target the first release with ML-DSA support.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            SigningCertificateLineage lineage =
+                    createLineageWithSignersFromResources(
+                            FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                            ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                            SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+
+            assertEquals(AndroidSdkVersion.C, lineage.getMinimumSupportedSdkVersion());
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
     }
 
     /**
