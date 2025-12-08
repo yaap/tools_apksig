@@ -18,6 +18,7 @@ package com.android.apksig.internal.apk;
 
 import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.Pair;
+
 import java.security.spec.AlgorithmParameterSpec;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.PSSParameterSpec;
@@ -150,7 +151,16 @@ public enum SignatureAlgorithm {
             "DSA",
             Pair.of("SHA256withDSA", null),
             AndroidSdkVersion.P,
-            AndroidSdkVersion.INITIAL_RELEASE);
+            AndroidSdkVersion.INITIAL_RELEASE),
+
+    ML_DSA(
+            0x0501,
+            ContentDigestAlgorithm.CHUNKED_SHA512,
+            "ML-DSA",
+            Pair.of("ML-DSA", null),
+            // TODO(b/462801233): Update these to C once the SDK is finalized.
+            AndroidSdkVersion.B,
+            AndroidSdkVersion.B);
 
     private final int mId;
     private final String mJcaKeyAlgorithm;

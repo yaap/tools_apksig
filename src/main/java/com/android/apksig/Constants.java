@@ -62,4 +62,6 @@ public class Constants {
             SourceStampConstants.V2_SOURCE_STAMP_BLOCK_ID;
 
     public static final String OID_RSA_ENCRYPTION = "1.2.840.113549.1.1.1";
+    public static final String OID_ML_DSA_65 = "2.16.840.1.101.3.4.3.18";
+    public static final String OID_ML_DSA_87 = "2.16.840.1.101.3.4.3.19";
 }

@@ -35,6 +35,8 @@ import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_2_SIGN
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGNERS_1_NO_CAPS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGNERS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_TO_RSA_4096_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 // BEGIN-AOSP
 import static com.android.apksig.internal.util.Resources.TEST_GCP_KEY_RING;
@@ -80,6 +82,7 @@ import com.android.apksig.util.DataSources;
 import com.android.apksig.zip.ZipFormatException;
 
 import org.bouncycastle.jce.provider.BouncyCastleProvider;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -97,6 +100,7 @@ import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.security.PrivateKey;
+import java.security.Provider;
 import java.security.Security;
 import java.security.Signature;
 import java.security.SignatureException;
@@ -1215,6 +1219,51 @@ public class ApkSignerTest {
         // Does not verify on API Level 17 because EC not supported
         assertVerificationFailure(
                 verifyForMinSdkVersion(out, 17), Issue.JAR_SIG_UNSUPPORTED_SIG_ALG);
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testMlDsaSignedVerifies() throws Exception {
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            String[] signerResources =
+                    new String[] {ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                            ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME};
+            for (String signerResource : signerResources) {
+                List<ApkSigner.SignerConfig> mlDsaSignerConfig =
+                        Collections.singletonList(
+                                getDefaultSignerConfigFromResources(signerResource));
+
+                // First verify the single signer works by default; this should disable V1 signing
+                // since jar signing does not support PQC signature algorithms.
+                // TODO(b/462803851): Reenable V4 once the platform supports the size increase
+                // for V4 signature artifacts.
+                File out =
+                        sign(
+                                "original-minSdk36.apk",
+                                new ApkSigner.Builder(mlDsaSignerConfig)
+                                        .setV4SigningEnabled(false));
+                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.B));
+
+                // Verify that signing works when only V2 is specified; since a minSdkVersion of
+                // the target for PQC will never verify the V2 scheme, this test is intended to
+                // verify for any products that can only support V2.
+                out =
+                        sign(
+                                "original-minSdk36.apk",
+                                new ApkSigner.Builder(mlDsaSignerConfig)
+                                        .setV1SigningEnabled(false)
+                                        .setV2SigningEnabled(true)
+                                        .setV3SigningEnabled(false)
+                                        .setV4SigningEnabled(false));
+                assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.B));
+            }
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
     }
 
     @Test

@@ -204,12 +204,12 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         if (signerConfigs.isEmpty() && targetedSignerConfigs.isEmpty()) {
             throw new IllegalArgumentException("At least one signer config must be provided");
         }
-
-        mV1SigningEnabled = v1SigningEnabled;
+        // The V1 signature scheme does not support PQC signing, ensure it is disabled if the
+        // signing config only contains PQC keys.
+        boolean shouldEnableV1 = v1SigningEnabled;
         mV2SigningEnabled = v2SigningEnabled;
         mV3SigningEnabled = v3SigningEnabled;
         mVerityEnabled = verityEnabled;
-        mV1SignaturePending = v1SigningEnabled;
         mV2SignaturePending = v2SigningEnabled;
         mV3SignaturePending = v3SigningEnabled;
         mDebuggableApkPermitted = debuggableApkPermitted;
@@ -244,11 +244,26 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                                     + " oldest signer to enable v1 signing");
                     }
                 }
-                createV1SignerConfigs(Collections.singletonList(oldestConfig), minSdkVersion);
+                // If the oldest config is still a PQC signing key, then disable V1 signing.
+                if (ApkSigningBlockUtils.isPqcSigner(oldestConfig.getCertificates())) {
+                    shouldEnableV1 = false;
+                } else {
+                    createV1SignerConfigs(Collections.singletonList(oldestConfig), minSdkVersion);
+                }
             } else {
-                createV1SignerConfigs(signerConfigs, minSdkVersion);
+                for (SignerConfig signerConfig : signerConfigs) {
+                    if (ApkSigningBlockUtils.isPqcSigner(signerConfig.getCertificates())) {
+                        shouldEnableV1 = false;
+                        break;
+                    }
+                }
+                if (shouldEnableV1) {
+                    createV1SignerConfigs(signerConfigs, minSdkVersion);
+                }
             }
         }
+        mV1SigningEnabled = shouldEnableV1;
+        mV1SignaturePending = shouldEnableV1;
     }
 
     private void createV1SignerConfigs(List<SignerConfig> signerConfigs, int minSdkVersion)
@@ -469,8 +484,26 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
             // V4 uses signer config to connect back to v3. Use the same filtering logic.
             v4Configs = processV3Configs(v4Configs);
         }
-        List<ApkSigningBlockUtils.SignerConfig> v41configs = processV31SignerConfigs(v4Configs);
-        return new V4SchemeSigner.SignerConfig(v4Configs, v41configs);
+        List<ApkSigningBlockUtils.SignerConfig> v41Configs = processV31SignerConfigs(v4Configs);
+        // TODO(b/462803851): Remove this once the V4 artifact size is increased in the platform.
+        // Right now the platform has a maximum size of 8K for the V4 signing artifact, but PQC
+        // signatures will put it over this limit. If any SignerConfig instance is PQC, then
+        // throw the InvalidKeyException to disable the V4 signature.
+        for (ApkSigningBlockUtils.SignerConfig signerConfig : v4Configs) {
+            if (ApkSigningBlockUtils.isPqcSigner(signerConfig.certificates)) {
+                throw new InvalidKeyException(
+                        "The V4 signature scheme does not currently support PQC signers");
+            }
+        }
+        if (v41Configs != null) {
+            for (ApkSigningBlockUtils.SignerConfig signerConfig : v41Configs) {
+                if (ApkSigningBlockUtils.isPqcSigner(signerConfig.certificates)) {
+                    throw new InvalidKeyException(
+                            "The V4 signature scheme does not currently support PQC signers");
+                }
+            }
+        }
+        return new V4SchemeSigner.SignerConfig(v4Configs, v41Configs);
     }
 
     private ApkSigningBlockUtils.SignerConfig createSourceStampSignerConfig()

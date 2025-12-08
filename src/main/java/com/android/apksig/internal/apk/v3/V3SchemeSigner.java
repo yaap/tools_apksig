@@ -24,8 +24,8 @@ import static com.android.apksig.internal.apk.ApkSigningBlockUtils.encodePublicK
 
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
-import com.android.apksig.internal.apk.ApkSigningBlockUtils.SigningSchemeBlockAndDigests;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils.SignerConfig;
+import com.android.apksig.internal.apk.ApkSigningBlockUtils.SigningSchemeBlockAndDigests;
 import com.android.apksig.internal.apk.ContentDigestAlgorithm;
 import com.android.apksig.internal.apk.SignatureAlgorithm;
 import com.android.apksig.internal.util.Pair;
@@ -151,6 +151,10 @@ public class V3SchemeSigner {
                 // digest being the weak link. SHA-512 is the next strongest supported digest.
                 return Collections.singletonList(SignatureAlgorithm.ECDSA_WITH_SHA512);
             }
+        } else if ("ML-DSA".equalsIgnoreCase(keyAlgorithm)) {
+            List<SignatureAlgorithm> algorithms = new ArrayList<>();
+            algorithms.add(SignatureAlgorithm.ML_DSA);
+            return algorithms;
         } else {
             throw new InvalidKeyException("Unsupported key algorithm: " + keyAlgorithm);
         }
