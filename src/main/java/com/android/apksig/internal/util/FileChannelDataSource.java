@@ -16,8 +16,11 @@
 
 package com.android.apksig.internal.util;
 
+import com.android.apksig.ApkSigOptions;
+import com.android.apksig.ApkSigOptions.ByteBufferAllocationMode;
 import com.android.apksig.util.DataSink;
 import com.android.apksig.util.DataSource;
+
 import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.BufferOverflowException;
@@ -160,7 +163,11 @@ public class FileChannelDataSource implements DataSource {
         if (size < 0) {
             throw new IndexOutOfBoundsException("size: " + size);
         }
-        ByteBuffer result = ByteBuffer.allocate(size);
+        ByteBuffer result =
+                ApkSigOptions.getInstance().getByteBufferAllocationMode()
+                        == ByteBufferAllocationMode.DIRECT
+                ? ByteBuffer.allocateDirect(size)
+                : ByteBuffer.allocate(size);
         copyTo(offset, size, result);
         result.flip();
         return result;
