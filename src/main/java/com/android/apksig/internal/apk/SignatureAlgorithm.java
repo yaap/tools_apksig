@@ -158,9 +158,8 @@ public enum SignatureAlgorithm {
             ContentDigestAlgorithm.CHUNKED_SHA512,
             "ML-DSA",
             Pair.of("ML-DSA", null),
-            // TODO(b/462801233): Update these to C once the SDK is finalized.
-            AndroidSdkVersion.B,
-            AndroidSdkVersion.B);
+            AndroidSdkVersion.C,
+            AndroidSdkVersion.C);
 
     private final int mId;
     private final String mJcaKeyAlgorithm;
