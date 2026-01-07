@@ -19,7 +19,6 @@ package com.android.apksig.internal.apk.v3;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.getLengthPrefixedSlice;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.readLengthPrefixedByteArray;
 
-import com.android.apksig.ApkVerificationIssue;
 import com.android.apksig.ApkVerifier.Issue;
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.apk.ApkFormatException;
@@ -79,6 +78,7 @@ public class V3SchemeVerifier {
     private final int mMaxSdkVersion;
     private final int mBlockId;
     private final OptionalInt mOptionalRotationMinSdkVersion;
+    private final OptionalInt mOptionalHybridMinSdkVersion;
     private final boolean mFullVerification;
 
     private ByteBuffer mApkSignatureSchemeV3Block;
@@ -93,6 +93,7 @@ public class V3SchemeVerifier {
             int maxSdkVersion,
             int blockId,
             OptionalInt optionalRotationMinSdkVersion,
+            OptionalInt optionalHybridMinSdkVersion,
             boolean fullVerification) {
         mExecutor = executor;
         mApk = apk;
@@ -103,6 +104,7 @@ public class V3SchemeVerifier {
         mMaxSdkVersion = maxSdkVersion;
         mBlockId = blockId;
         mOptionalRotationMinSdkVersion = optionalRotationMinSdkVersion;
+        mOptionalHybridMinSdkVersion = optionalHybridMinSdkVersion;
         mFullVerification = fullVerification;
     }
 
@@ -544,6 +546,21 @@ public class V3SchemeVerifier {
         // Parse the additional attributes block.
         int additionalAttributeCount = 0;
         boolean rotationAttrFound = false;
+        boolean hybridAttrFound = false;
+        String schemeVersion = null;
+        switch (mBlockId) {
+            case V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID:
+                schemeVersion = "3.2";
+                break;
+            case V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID:
+                schemeVersion = "3.1";
+                break;
+            case V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID:
+                schemeVersion = "3.0";
+                break;
+            default:
+                schemeVersion = "UNKNOWN";
+        }
         while (additionalAttributes.hasRemaining()) {
             additionalAttributeCount++;
             try {
@@ -589,11 +606,34 @@ public class V3SchemeVerifier {
                             result.addError(Issue.V31_BLOCK_MISSING, attrRotationMinSdkVersion);
                         }
                     }
-                } else if (id == V3SchemeConstants.ROTATION_ON_DEV_RELEASE_ATTR_ID) {
-                    // This attribute should only be used by a v3.1 signer to indicate rotation
-                    // is targeting the development release that is using the SDK version of the
-                    // previously released platform version.
-                    if (mBlockId != V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID) {
+                } else if (id == V3SchemeConstants.HYBRID_MIN_SDK_VERSION_ATTR_ID) {
+                    hybridAttrFound = true;
+                    int attrHybridMinSdkVersion =
+                            ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                    // The hybrid block was added with the v3.2 signature scheme; if the
+                    // maxSdkVersion does not support v3.2 then ignore this attribute.
+                    if (mMaxSdkVersion >= V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT
+                            && mFullVerification) {
+                        if (mOptionalHybridMinSdkVersion.isPresent()) {
+                            int hybridMinSdkVersion = mOptionalHybridMinSdkVersion.getAsInt();
+                            if (attrHybridMinSdkVersion != hybridMinSdkVersion) {
+                                result.addError(
+                                        Issue.V32_HYBRID_MIN_SDK_MISMATCH,
+                                        schemeVersion,
+                                        attrHybridMinSdkVersion,
+                                        hybridMinSdkVersion);
+                            }
+                        } else {
+                            result.addError(
+                                    Issue.V32_BLOCK_MISSING,
+                                    schemeVersion,
+                                    attrHybridMinSdkVersion);
+                        }
+                    }
+                } else if (id == V3SchemeConstants.SIGNER_TARGETS_DEV_RELEASE_ATTR_ID) {
+                    // This attribute should not be used on a v3.0 signer, but it can be used on
+                    // either a v3.1 or v3.2 signer if they target a development release.
+                    if (mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID) {
                         result.addWarning(Issue.V31_ROTATION_TARGETS_DEV_RELEASE_ATTR_ON_V3_SIGNER);
                     }
                 } else {
@@ -609,6 +649,12 @@ public class V3SchemeVerifier {
             result.addWarning(Issue.V31_ROTATION_MIN_SDK_ATTR_MISSING,
                     mOptionalRotationMinSdkVersion.getAsInt());
         }
+        if (mFullVerification && mOptionalHybridMinSdkVersion.isPresent() && !hybridAttrFound) {
+            result.addWarning(
+                    Issue.V32_HYBRID_MIN_SDK_ATTR_MISSING,
+                    mOptionalHybridMinSdkVersion.getAsInt(),
+                    schemeVersion);
+        }
     }
 
     /**
@@ -616,9 +662,14 @@ public class V3SchemeVerifier {
      */
     public static boolean signerTargetsDevRelease(
             ApkSigningBlockUtils.Result.SignerInfo signerInfo) {
-        boolean result = signerInfo.additionalAttributes.stream()
-                .mapToInt(attribute -> attribute.getId())
-                .anyMatch(attrId -> attrId == V3SchemeConstants.ROTATION_ON_DEV_RELEASE_ATTR_ID);
+        boolean result =
+                signerInfo.additionalAttributes.stream()
+                        .mapToInt(attribute -> attribute.getId())
+                        .anyMatch(
+                                attrId ->
+                                        attrId
+                                                == V3SchemeConstants
+                                                        .SIGNER_TARGETS_DEV_RELEASE_ATTR_ID);
         return result;
     }
 
@@ -635,6 +686,7 @@ public class V3SchemeVerifier {
         private int mBlockId = V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID;
         private boolean mFullVerification = true;
         private OptionalInt mOptionalRotationMinSdkVersion = OptionalInt.empty();
+        private OptionalInt mOptionalHybridMinSdkVersion = OptionalInt.empty();
 
         /**
          * Instantiates a new {@code Builder} for a {@code V3SchemeVerifier} that can be used to
@@ -695,6 +747,20 @@ public class V3SchemeVerifier {
         }
 
         /**
+         * Sets the {@code hybridMinSdkVersion} to be verified in the v3.0 / v3.1 signer's
+         * additional attributes.
+         *
+         * <p>This value can be obtained from the signers returned when verifying the v3.2 signature
+         * block of an APK; since the hybrid block only supports two signers and both signers must
+         * target the same SDK range, the minimum SDK version for either of the hybrid signers can
+         * be used.
+         */
+        public Builder setHybridMinSdkVersion(int hybridMinSdkVersion) {
+            mOptionalHybridMinSdkVersion = OptionalInt.of(hybridMinSdkVersion);
+            return this;
+        }
+
+        /**
          * Sets the {@code result} instance to be used when returning verification results.
          *
          * <p>This method can be used when the caller already has a {@link
@@ -751,6 +817,13 @@ public class V3SchemeVerifier {
                     // rest of the range.
                     mMinSdkVersion = mMaxSdkVersion;
                     break;
+                case V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID:
+                    sigSchemeVersion = ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V32;
+                    // A v3.2 signer is optional and can target any SDK range, the v3.0 / v3.1
+                    // signers should continue to support all blocks to cover cases where the
+                    // hybrid signer may not be supported.
+                    mMinSdkVersion = mMaxSdkVersion;
+                    break;
                 default:
                     throw new IllegalArgumentException(
                             String.format("Unsupported APK Signature Scheme V3 block ID: 0x%08x",
@@ -763,17 +836,19 @@ public class V3SchemeVerifier {
                 mContentDigestsToVerify = new HashSet<>(1);
             }
 
-            V3SchemeVerifier verifier = new V3SchemeVerifier(
-                    mExecutor,
-                    mApk,
-                    mZipSections,
-                    mContentDigestsToVerify,
-                    mResult,
-                    mMinSdkVersion,
-                    mMaxSdkVersion,
-                    mBlockId,
-                    mOptionalRotationMinSdkVersion,
-                    mFullVerification);
+            V3SchemeVerifier verifier =
+                    new V3SchemeVerifier(
+                            mExecutor,
+                            mApk,
+                            mZipSections,
+                            mContentDigestsToVerify,
+                            mResult,
+                            mMinSdkVersion,
+                            mMaxSdkVersion,
+                            mBlockId,
+                            mOptionalRotationMinSdkVersion,
+                            mOptionalHybridMinSdkVersion,
+                            mFullVerification);
             if (mApkSignatureSchemeV3Block != null) {
                 verifier.mApkSignatureSchemeV3Block = mApkSignatureSchemeV3Block;
             }

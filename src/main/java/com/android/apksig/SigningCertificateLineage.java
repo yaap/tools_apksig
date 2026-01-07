@@ -736,6 +736,32 @@ public class SigningCertificateLineage {
         return mSigningLineage.get(mSigningLineage.size() - 1).signingCert.equals(cert);
     }
 
+    /**
+     * Returns whether this lineage contains the same signing history as the provided {@code
+     * otherLineage}.
+     *
+     * <p>A lineage contains the signing history through the current signer; this method will verify
+     * that the certificates in each lineage are identical until the current signer.
+     */
+    public boolean containsSameHistory(SigningCertificateLineage otherLineage)
+            throws CertificateEncodingException {
+        List<X509Certificate> thisCerts = getCertificatesInLineage();
+        List<X509Certificate> otherCerts = otherLineage.getCertificatesInLineage();
+        if (thisCerts.size() != otherCerts.size()) {
+            return false;
+        }
+        for (int i = 0; i < thisCerts.size() - 1; i++) {
+            X509Certificate thisCert = thisCerts.get(i);
+            X509Certificate otherCert = otherCerts.get(i);
+            byte[] thisCertBytes = thisCert.getEncoded();
+            byte[] otherCertBytes = otherCert.getEncoded();
+            if (!Arrays.equals(thisCertBytes, otherCertBytes)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static int calculateDefaultFlags() {
         return PAST_CERT_INSTALLED_DATA | PAST_CERT_PERMISSION
                 | PAST_CERT_SHARED_USER_ID | PAST_CERT_AUTH;

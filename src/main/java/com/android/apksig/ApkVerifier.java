@@ -23,12 +23,14 @@ import static com.android.apksig.apk.ApkUtils.getTargetSdkVersionFromBinaryAndro
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V31;
+import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V32;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_JAR_SIGNATURE_SCHEME;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_SOURCE_STAMP;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.toHex;
 import static com.android.apksig.internal.apk.v1.V1SchemeConstants.MANIFEST_ENTRY_NAME;
 import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT;
+import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT;
 
 import com.android.apksig.ApkVerifier.Result.V2SchemeSignerInfo;
 import com.android.apksig.ApkVerifier.Result.V3SchemeSignerInfo;
@@ -216,22 +218,60 @@ public class ApkVerifier {
         Set<Integer> foundApkSigSchemeIds = new HashSet<>(2);
         if (maxSdkVersion >= AndroidSdkVersion.N) {
             RunnablesExecutor executor = RunnablesExecutor.SINGLE_THREADED;
+            int v32HybridMinSdkVersion = 0;
+            if (maxSdkVersion >= MIN_SDK_WITH_V32_SUPPORT) {
+                try {
+                    ApkSigningBlockUtils.Result v32Result =
+                            new V3SchemeVerifier.Builder(
+                                            apk,
+                                            zipSections,
+                                            Math.max(minSdkVersion, MIN_SDK_WITH_V32_SUPPORT),
+                                            maxSdkVersion)
+                                    .setRunnablesExecutor(executor)
+                                    .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID)
+                                    .build()
+                                    .verify();
+                    foundApkSigSchemeIds.add(VERSION_APK_SIGNATURE_SCHEME_V32);
+                    result.mergeFrom(v32Result);
+                    // If a v3.2 hybrid signer was successfully verified from the APK, then get the
+                    // min SDK version for the block to verify the stripping protection in the
+                    // subsequent V3 checks.
+                    Result.V32SchemeSignerInfo v32Signers = result.getV32SchemeSigner();
+                    if (v32Signers != null) {
+                        v32HybridMinSdkVersion = v32Signers.getPqcSignerInfo().getMinSdkVersion();
+                    }
+                } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
+                    // v3.2 signature not required
+                }
+                if (result.containsErrors()) {
+                    return result;
+                }
+            }
             // Android T and newer attempts to verify APKs using APK Signature Scheme V3.1. v3.0
             // also includes stripping protection for the minimum SDK version on which the rotated
             // signing key should be used.
-            int rotationMinSdkVersion = 0;
+            int v31RotationMinSdkVersion = 0;
             if (maxSdkVersion >= MIN_SDK_WITH_V31_SUPPORT) {
                 try {
-                    ApkSigningBlockUtils.Result v31Result = new V3SchemeVerifier.Builder(apk,
-                            zipSections, Math.max(minSdkVersion, MIN_SDK_WITH_V31_SUPPORT),
-                            maxSdkVersion)
-                            .setRunnablesExecutor(executor)
-                            .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID)
-                            .build()
-                            .verify();
+                    V3SchemeVerifier.Builder builder =
+                            new V3SchemeVerifier.Builder(
+                                            apk,
+                                            zipSections,
+                                            Math.max(minSdkVersion, MIN_SDK_WITH_V31_SUPPORT),
+                                            maxSdkVersion)
+                                    .setRunnablesExecutor(executor)
+                                    .setBlockId(
+                                            V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID);
+                    if (v32HybridMinSdkVersion > 0) {
+                        builder.setHybridMinSdkVersion(v32HybridMinSdkVersion);
+                    }
+                    ApkSigningBlockUtils.Result v31Result = builder.build().verify();
                     foundApkSigSchemeIds.add(VERSION_APK_SIGNATURE_SCHEME_V31);
-                    rotationMinSdkVersion = v31Result.signers.stream().mapToInt(
-                            signer -> signer.minSdkVersion).min().orElse(0);
+                    v31RotationMinSdkVersion =
+                            v31Result.signers.stream()
+                                    .mapToInt(signer -> signer.minSdkVersion)
+                                    .min()
+                                    .orElse(0);
                     result.mergeFrom(v31Result);
                     signatureSchemeApkContentDigests.put(
                             VERSION_APK_SIGNATURE_SCHEME_V31,
@@ -253,8 +293,11 @@ public class ApkVerifier {
                             maxSdkVersion)
                             .setRunnablesExecutor(executor)
                             .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID);
-                    if (rotationMinSdkVersion > 0) {
-                        builder.setRotationMinSdkVersion(rotationMinSdkVersion);
+                    if (v32HybridMinSdkVersion > 0) {
+                        builder.setHybridMinSdkVersion(v32HybridMinSdkVersion);
+                    }
+                    if (v31RotationMinSdkVersion > 0) {
+                        builder.setRotationMinSdkVersion(v31RotationMinSdkVersion);
                     }
                     ApkSigningBlockUtils.Result v3Result = builder.build().verify();
                     foundApkSigSchemeIds.add(ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3);
@@ -1272,12 +1315,14 @@ public class ApkVerifier {
         private final List<V3SchemeSignerInfo> mV31SchemeSigners = new ArrayList<>();
         private final List<V4SchemeSignerInfo> mV4SchemeSigners = new ArrayList<>();
         private SourceStampInfo mSourceStampInfo;
+        private V32SchemeSignerInfo mV32SchemeSigner;
 
         private boolean mVerified;
         private boolean mVerifiedUsingV1Scheme;
         private boolean mVerifiedUsingV2Scheme;
         private boolean mVerifiedUsingV3Scheme;
         private boolean mVerifiedUsingV31Scheme;
+        private boolean mVerifiedUsingV32Scheme;
         private boolean mVerifiedUsingV4Scheme;
         private boolean mSourceStampVerified;
         private boolean mWarningsAsErrors;
@@ -1320,6 +1365,11 @@ public class ApkVerifier {
          */
         public boolean isVerifiedUsingV31Scheme() {
             return mVerifiedUsingV31Scheme;
+        }
+
+        /** Returns {@code true} if the APK's APK Signature Scheme v3.2 signature verified. */
+        public boolean isVerifiedUsingV32Scheme() {
+            return mVerifiedUsingV32Scheme;
         }
 
         /**
@@ -1398,6 +1448,18 @@ public class ApkVerifier {
          */
         public List<V3SchemeSignerInfo> getV31SchemeSigners() {
             return mV31SchemeSigners;
+        }
+
+        /**
+         * Returns information about the APK Signature Scheme v3.2 signer associated with the APK's
+         * signature.
+         *
+         * <p><note> The v3.2 signature scheme only supports a single signer consisting of a
+         * classical and PQC signer, so only a single instance of the {@link V32SchemeSignerInfo}
+         * class is returned.</note>
+         */
+        public V32SchemeSignerInfo getV32SchemeSigner() {
+            return mV32SchemeSigner;
         }
 
         /**
@@ -1520,6 +1582,10 @@ public class ApkVerifier {
                     }
                     mSigningCertificateLineage = source.signingCertificateLineage;
                     break;
+                case VERSION_APK_SIGNATURE_SCHEME_V32:
+                    mVerifiedUsingV32Scheme = source.verified;
+                    verifyAndMergeV32Result(source);
+                    break;
                 case VERSION_APK_SIGNATURE_SCHEME_V4:
                     mVerifiedUsingV4Scheme = source.verified;
                     for (ApkSigningBlockUtils.Result.SignerInfo signer : source.signers) {
@@ -1534,6 +1600,153 @@ public class ApkVerifier {
                     break;
                 default:
                     throw new IllegalArgumentException("Unknown Signing Block Scheme Id");
+            }
+        }
+
+        /**
+         * Verifies that the provided {@code source} result meets the requirements of the v3.2
+         * signature scheme; if all requirements are met, the result will be marked as verified with
+         * the v3.2 scheme.
+         */
+        private void verifyAndMergeV32Result(ApkSigningBlockUtils.Result source) {
+            // Verify there are exactly two signers in the result.
+            int numV32Signers = source.signers.size();
+            if (numV32Signers != 2) {
+                addError(Issue.V32_MISSING_DUAL_SIGNERS, numV32Signers);
+                return;
+            }
+            ApkSigningBlockUtils.Result.SignerInfo signerInfo1 = source.signers.get(0);
+            ApkSigningBlockUtils.Result.SignerInfo signerInfo2 = source.signers.get(1);
+
+            // Attempt a best case effort to determine the type of the signer since an error parsing
+            // a signer could result in the certs being null / empty.
+            boolean isSigner1Pqc = false;
+            if (signerInfo1.certs != null && !signerInfo1.certs.isEmpty()) {
+                isSigner1Pqc = ApkSigningBlockUtils.isPqcSigner(signerInfo1.certs);
+            }
+            boolean isSigner2Pqc = false;
+            if (signerInfo2.certs != null && !signerInfo2.certs.isEmpty()) {
+                isSigner2Pqc = ApkSigningBlockUtils.isPqcSigner(signerInfo2.certs);
+            }
+            // Verify no errors were reported for either of the signers.
+            // If one of the signers failed to verify, it may be due to a provider with PQC support
+            // not being available.
+            boolean signer1ContainsErrors = signerInfo1.containsErrors();
+            boolean signer2ContainsErrors = signerInfo2.containsErrors();
+            if (signer1ContainsErrors || signer2ContainsErrors) {
+                V3SchemeSignerInfo classicalInfo = null;
+                V3SchemeSignerInfo pqcInfo = null;
+                // As long as at least one signer could be parsed, assign the signers based on the
+                // results from that signer.
+                if (signerInfo1.certs != null && !signerInfo1.certs.isEmpty()) {
+                    classicalInfo = isSigner1Pqc ? new V3SchemeSignerInfo(signerInfo2)
+                            : new V3SchemeSignerInfo(signerInfo1);
+                    pqcInfo = isSigner1Pqc ? new V3SchemeSignerInfo(signerInfo1)
+                            : new V3SchemeSignerInfo(signerInfo2);
+                } else if (signerInfo2.certs != null && !signerInfo2.certs.isEmpty()) {
+                    classicalInfo = isSigner2Pqc ? new V3SchemeSignerInfo(signerInfo1)
+                            : new V3SchemeSignerInfo(signerInfo2);
+                    pqcInfo = isSigner2Pqc ? new V3SchemeSignerInfo(signerInfo2)
+                            : new V3SchemeSignerInfo(signerInfo1);
+                } else {
+                    // Neither signer returned certs, since an error parsing PQC is more likely,
+                    // assume the signer with the error is the PQC signer. If both have errors,
+                    // assume the first is classical; callers should note that errors from the
+                    // signers can result in unreliable results from the V32SchemeInfo signer APIs.
+                    if ((signer1ContainsErrors && signer2ContainsErrors) || signer2ContainsErrors) {
+                        classicalInfo = new V3SchemeSignerInfo(signerInfo1);
+                        pqcInfo = new V3SchemeSignerInfo(signerInfo2);
+                    } else {
+                        classicalInfo = new V3SchemeSignerInfo(signerInfo2);
+                        pqcInfo = new V3SchemeSignerInfo(signerInfo1);
+                    }
+                }
+                mV32SchemeSigner = new V32SchemeSignerInfo(classicalInfo, pqcInfo);
+                addError(Issue.V32_HYBRID_SIGNER_ERROR);
+                return;
+            }
+
+            // Verify one classical and one PQC signer were found; since there were no errors, the
+            // certs were available and the type of both signers could be determined above.
+            if (isSigner1Pqc == isSigner2Pqc) {
+                addError(Issue.V32_INCORRECT_ALGORITHM_PAIR, isSigner1Pqc ? "PQC" : "classical");
+                // Construct the V32SchemeSignerInfo so the caller can inspect the details of the
+                // signers in the hybrid block if required. The getXSignerInfo APIs indicate if a
+                // problem is found with both signers, the first signer is set as the classical
+                // signer.
+                V3SchemeSignerInfo v3Signer1 = new V3SchemeSignerInfo(signerInfo1);
+                V3SchemeSignerInfo v3Signer2 = new V3SchemeSignerInfo(signerInfo2);
+                mV32SchemeSigner = new V32SchemeSignerInfo(v3Signer1, v3Signer2);
+                return;
+            }
+            ApkSigningBlockUtils.Result.SignerInfo classicalSigner =
+                    isSigner1Pqc ? signerInfo2 : signerInfo1;
+            ApkSigningBlockUtils.Result.SignerInfo pqcSigner =
+                    isSigner1Pqc ? signerInfo1 : signerInfo2;
+            // Construct the V32SchemeSignerInfo instance now so that it is available for the caller
+            // to inspect additional details if any errors are encountered below.
+            V3SchemeSignerInfo classicalInfo = new V3SchemeSignerInfo(classicalSigner);
+            V3SchemeSignerInfo pqcInfo = new V3SchemeSignerInfo(pqcSigner);
+            mV32SchemeSigner = new V32SchemeSignerInfo(classicalInfo, pqcInfo);
+
+            // Verify both signers target the same SDK ranges.
+            if (classicalSigner.minSdkVersion != pqcSigner.minSdkVersion
+                    || classicalSigner.maxSdkVersion != pqcSigner.maxSdkVersion) {
+                addError(
+                        Issue.V32_SIG_INCONSISTENT_SDK_TARGETING,
+                        classicalSigner.minSdkVersion,
+                        classicalSigner.maxSdkVersion,
+                        pqcSigner.minSdkVersion,
+                        pqcSigner.maxSdkVersion);
+                return;
+            }
+
+            // Verify both signers have the exact same signing history up through the current
+            // signer.
+            SigningCertificateLineage classicalLineage = classicalSigner.signingCertificateLineage;
+            SigningCertificateLineage pqcLineage = pqcSigner.signingCertificateLineage;
+            if ((classicalLineage == null) != (pqcLineage == null)) {
+                addError(
+                        Issue.V32_SIG_LINEAGE_MISMATCH_NUMBER_OF_CERTS,
+                        classicalLineage != null ? classicalLineage.size() : 0,
+                        pqcLineage != null ? pqcLineage.size() : 0);
+                return;
+            }
+            if (classicalLineage != null) {
+                List<X509Certificate> classicalCerts = classicalLineage.getCertificatesInLineage();
+                List<X509Certificate> pqcCerts = pqcLineage.getCertificatesInLineage();
+                if (classicalCerts.size() != pqcCerts.size()) {
+                    addError(
+                            Issue.V32_SIG_LINEAGE_MISMATCH_NUMBER_OF_CERTS,
+                            classicalLineage.size(),
+                            pqcLineage.size());
+                    return;
+                }
+                try {
+                    for (int i = 0; i < classicalCerts.size() - 1; i++) {
+                        X509Certificate classicalCert = classicalCerts.get(i);
+                        X509Certificate pqcCert = pqcCerts.get(i);
+                        byte[] classicalCertBytes = classicalCert.getEncoded();
+                        byte[] pqcCertBytes = pqcCert.getEncoded();
+                        if (!Arrays.equals(classicalCertBytes, pqcCertBytes)) {
+                            addError(
+                                    Issue.V32_SIG_LINEAGE_MISMATCH_IN_HISTORY,
+                                    i,
+                                    classicalCert.getSubjectDN(),
+                                    pqcCert.getSubjectDN());
+                            return;
+                        }
+                        SigningCertificateLineage.SignerCapabilities classicalCapabilities =
+                                classicalLineage.getSignerCapabilities(classicalCert);
+                        SigningCertificateLineage.SignerCapabilities pqcCapabilities =
+                                pqcLineage.getSignerCapabilities(pqcCert);
+                        if (!classicalCapabilities.equals(pqcCapabilities)) {
+                            addError(Issue.V32_SIG_LINEAGE_MISMATCH_IN_CAPABILITIES, i);
+                        }
+                    }
+                } catch (CertificateEncodingException e) {
+                    addError(Issue.V32_SIG_LINEAGE_MALFORMED_CERT, e.getMessage());
+                }
             }
         }
 
@@ -1825,7 +2038,7 @@ public class ApkVerifier {
                     mContentDigests;
             private final int mMinSdkVersion;
             private final int mMaxSdkVersion;
-            private final boolean mRotationTargetsDevRelease;
+            private final boolean mSignerTargetsDevRelease;
             private final SigningCertificateLineage mSigningCertificateLineage;
 
             private V3SchemeSignerInfo(ApkSigningBlockUtils.Result.SignerInfo result) {
@@ -1837,9 +2050,14 @@ public class ApkVerifier {
                 mMinSdkVersion = result.minSdkVersion;
                 mMaxSdkVersion = result.maxSdkVersion;
                 mSigningCertificateLineage = result.signingCertificateLineage;
-                mRotationTargetsDevRelease = result.additionalAttributes.stream().mapToInt(
-                        attribute -> attribute.getId()).anyMatch(
-                        attrId -> attrId == V3SchemeConstants.ROTATION_ON_DEV_RELEASE_ATTR_ID);
+                mSignerTargetsDevRelease =
+                        result.additionalAttributes.stream()
+                                .mapToInt(attribute -> attribute.getId())
+                                .anyMatch(
+                                        attrId ->
+                                                attrId
+                                                        == V3SchemeConstants
+                                                                .SIGNER_TARGETS_DEV_RELEASE_ATTR_ID);
             }
 
             /**
@@ -1904,13 +2122,31 @@ public class ApkVerifier {
              * Returns whether rotation is targeting a development release.
              *
              * <p>A development release uses the SDK version of the previously released platform
-             * until the SDK of the development release is finalized. To allow rotation to target
-             * a development release after T, this attribute must be set to ensure rotation is
-             * used on the development release but ignored on the released platform with the same
-             * API level.
+             * until the SDK of the development release is finalized. To allow rotation to target a
+             * development release after T, this attribute must be set to ensure rotation is used on
+             * the development release but ignored on the released platform with the same API level.
+             *
+             * @deprecated This method only captures one use case for the signer targeting a
+             *     development release attribute; use {@link #getSignerTargetsDevRelease()} instead.
              */
             public boolean getRotationTargetsDevRelease() {
-                return mRotationTargetsDevRelease;
+                return mSignerTargetsDevRelease;
+            }
+
+            /**
+             * Returns whether this signer is targeting a development release.
+             *
+             * <p>A development release uses the SDK version of the previously released platform
+             * until the SDK of the development release is finalized. To allow a new signature
+             * scheme version or algorithm to target a development release, this attribute must be
+             * set to ensure the signer is used on the development release but is ignored on the
+             * released platform with the same SDK version.
+             *
+             * <p>Note: This was previously referenced for rotation, but the attribute can apply to
+             * any signer targeting a development release.
+             */
+            public boolean getSignerTargetsDevRelease() {
+                return mSignerTargetsDevRelease;
             }
 
             /**
@@ -1921,6 +2157,48 @@ public class ApkVerifier {
              */
             public SigningCertificateLineage getSigningCertificateLineage() {
                 return mSigningCertificateLineage;
+            }
+        }
+
+        /** Information about the APK Signature Scheme v3.2 hybrid signers. */
+        public static class V32SchemeSignerInfo {
+            private final V3SchemeSignerInfo mClassicalSignerInfo;
+            private final V3SchemeSignerInfo mPqcSignerInfo;
+
+            private V32SchemeSignerInfo(
+                    V3SchemeSignerInfo classicalSignerInfo, V3SchemeSignerInfo pqcSignerInfo) {
+                mClassicalSignerInfo = classicalSignerInfo;
+                mPqcSignerInfo = pqcSignerInfo;
+            }
+
+            /**
+             * Returns the {@link V3SchemeSignerInfo} of the signer that used a classical signature
+             * algorithm to sign the v3.2 hybrid signature block.
+             *
+             * <p>In the case of errors during verification of this signer, it is possible that the
+             * verifier will not have enough information to determine which is the classical signer.
+             * If the algorithm type of neither signer can be determined due to an error parsing
+             * the certificates, then the classical signer will typically be returned as the signer
+             * without an error. If both signers resulted in errors, then the classical signer will
+             * be returned as the first parsed signer in the hybrid block.
+             */
+            public V3SchemeSignerInfo getClassicalSignerInfo() {
+                return mClassicalSignerInfo;
+            }
+
+            /**
+             * Returns the {@link V3SchemeSignerInfo} of the signer that used a PQC signature
+             * algorithm to sign the v3.2 hybrid signature block.
+             *
+             * <p>In the case of errors during verification of this signer, it is possible that the
+             * verifier will not have enough information to determine which is the PQC signer.
+             * If the algorithm type of neither signer can be determined due to an error parsing
+             * the certificates, then the PQC signer will typically be returned as the signer
+             * with an error. If both signers resulted in errors, then the PQC signer will be
+             * returned as the second parsed signer in the hybrid block.
+             */
+            public V3SchemeSignerInfo getPqcSignerInfo() {
+                return mPqcSignerInfo;
             }
         }
 
@@ -3005,6 +3283,146 @@ public class ApkVerifier {
         V31_ROTATION_TARGETS_DEV_RELEASE_ATTR_ON_V3_SIGNER(
                 "The rotation-targets-dev-release attribute is only supported on v3.1 signers; "
                         + "this attribute will be ignored by the platform in a v3.0 signer"),
+
+        /**
+         * The APK contains a v3.2 signing block, but the block does not contain the expected number
+         * of signers.
+         *
+         * <ul>
+         * <li>Parameter 1: number of signers in the v3.2 block ({@code int})
+         * </ul>
+         */
+        V32_MISSING_DUAL_SIGNERS(
+                "The v3.2 signature scheme must have exactly two signers, found %1$d"),
+
+        /**
+         * The APK contains a v3.2 signing block, but both of the signers in the block are the same
+         * class of algorithms (both classical or both PQC).
+         *
+         * <ul>
+         * <li>Parameter 1: Class of algorithm for both signers ('classical' or 'PQC')
+         * ({@code String})
+         * </ul>
+         */
+        V32_INCORRECT_ALGORITHM_PAIR(
+                "The v3.2 signature scheme must have one classical signer and one PQC signer, "
+                        + "found both %1$s"),
+
+        /**
+         * The APK contains a v3.2 signing block, but the signers are not targeting the same SDK
+         * range.
+         *
+         * <ul>
+         * <li>Parameter 1: Signer 1 min SDK version ({@code int})
+         * <li>Parameter 2: Signer 1 max SDK version ({@code int})
+         * <li>Parameter 3: Signer 2 min SDK version ({@code int})
+         * <li>Parameter 4: Signer 2 max SDK version ({@code int})
+         * </ul>
+         */
+        V32_SIG_INCONSISTENT_SDK_TARGETING(
+                "Each signer in the v3.2 block must target the same SDK versions. Signer 1: %1$d "
+                        + "- %2$d, Signer 2: %3$d - %4$d"),
+
+        /**
+         * The APK contains a v3.2 signing block, but the signers have a differing number of
+         * certificates in their lineage.
+         *
+         * <ul>
+         * <li>Parameter 1: Number of certificates in classical lineage ({@code int})
+         * <li>Parameter 2: Number of certificates in PQC lineage ({@code int})
+         * </ul>
+         */
+        V32_SIG_LINEAGE_MISMATCH_NUMBER_OF_CERTS(
+                "The signers in the v3.2 block don't have the same number of certificates in "
+                        + "their signing history; classical signer: %1$d, PQC signer: %2$d"),
+
+        /**
+         * The APK contains a v3.2 signing block and both signers have the same number of
+         * certificates in their signing history, but the history diverges at a particular index.
+         *
+         * <ul>
+         * <li>Parameter 1: Index at which the history diverges ({@code int})
+         * <li>Parameter 2: Subject DN of the classical signer at the index ({@code String})
+         * <li>Parameter 3: Subject DN of the PQC signer at the index ({@code String})
+         * </ul>
+         */
+        V32_SIG_LINEAGE_MISMATCH_IN_HISTORY(
+                "The signers in the v3.2 block don't have the same certificates in their history "
+                        + "starting from index %1$d; classical signer: %2$s, PQC signer: %3$s"),
+
+        /**
+         * The APK contains a v3.2 signing block and both signers have the same certificates in
+         * their history up through the specified index, but the capabilities of the signers at this
+         * index diverge.
+         *
+         * <ul>
+         * <li>Parameter 1: Index at which the history diverges ({@code int})
+         * </ul>
+         */
+        V32_SIG_LINEAGE_MISMATCH_IN_CAPABILITIES(
+                "The signers in the v3.2 block don't have the same capabilities in their history "
+                        + "starting from index %1$d"),
+
+        /**
+         * The APK contains a v3.2 signing block, but one of the certificates from one of the
+         * signer's history could not be parsed.
+         *
+         * <ul>
+         * <li>Parameter 1: Exception message from failed certificate parsing ({@code String})
+         * </ul>
+         */
+        V32_SIG_LINEAGE_MALFORMED_CERT(
+                "One of the certificates in the v3.2 signing history could not be parsed due to "
+                        + "the following exception: %1$s"),
+
+        /**
+         * The v3 / v3.1 stripping protection attribute for the hybrid block does not match the
+         * minimum SDK version being targeted by the v3.2 signer block in the APK.
+         *
+         * <ul>
+         * <li>Parameter 1: Version of signing block with mismatched attribute ({@code String})
+         * <li>Parameter 2: min SDK version supporting hybrid from attribute ({@code int})
+         * <li>Parameter 3: min SDK version supporting hybrid from v3.2 block ({@code int})
+         * </ul>
+         */
+        V32_HYBRID_MIN_SDK_MISMATCH(
+                "The v%1$s signer indicates a hybrid signer should be supported starting from SDK"
+                        + " version %2$d, but the v3.2 block targets SDK version %3$d"),
+
+        /**
+         * The v3 / v3.1 stripping protection attriute for the hybrid block is present, but a v3.2
+         * signing lock was not found.
+         *
+         * <ul>
+         * <li>Parameter 1: Version of signing block with hybrid attribute ({@code String})
+         * <li>Parameter 2: min SDK version supporting hybrid from attribute ({@code int})
+         * </ul>
+         */
+        V32_BLOCK_MISSING(
+                "The v%1$s signer indicates a hybrid signer should be supported starting from SDK"
+                        + " version %2$d, but a v3.2 block was not found"),
+
+        /**
+         * The APK contains a v3.2 block, but the hybrid SDK version stripping protection attribute
+         * was not written to one of the v3 / v3.1 signer's additional attributes.
+         *
+         * <ul>
+         * <li>Parameter 1: min SDK version supporting hybrid from v3.2 block ({@code int})
+         * <li>Parameter 2: Version of signing block missing hybrid attribute (@code String})
+         * </ul>
+         */
+        V32_HYBRID_MIN_SDK_ATTR_MISSING(
+                "APK supports the v3.2 hybrid block starting from SDK version %1$d, but the v%2$s"
+                        + " signer does not contain the attribute to detect if this signature is "
+                        + "stripped"),
+
+        /**
+         * The APK contains a v3.2 block, but one of the signers failed signature verification. Both
+         * signers should be checked for errors to determine the cause of the failure.
+         */
+        V32_HYBRID_SIGNER_ERROR(
+                "The APK contains a v3.2 signature block, but an error was encountered with one "
+                        + "of the hybrid signers"),
 
         /**
          * APK Signing Block contains an unknown entry.

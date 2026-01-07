@@ -25,6 +25,7 @@ import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkSigningBlockNotFoundException;
 import com.android.apksig.apk.ApkUtils;
 import com.android.apksig.apk.MinSdkVersionException;
+import com.android.apksig.internal.apk.ApkSigningBlockUtils;
 import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.util.AndroidSdkVersion;
 import com.android.apksig.internal.util.ByteBufferDataSource;
@@ -94,6 +95,7 @@ public class ApkSigner {
     private final SigningCertificateLineage mSourceStampSigningCertificateLineage;
     private final boolean mForceSourceStampOverwrite;
     private final boolean mSourceStampTimestampEnabled;
+    private final HybridSignerConfig mHybridSignerConfig;
     private final Integer mMinSdkVersion;
     private final int mRotationMinSdkVersion;
     private final boolean mRotationTargetsDevRelease;
@@ -129,6 +131,7 @@ public class ApkSigner {
             SigningCertificateLineage sourceStampSigningCertificateLineage,
             boolean forceSourceStampOverwrite,
             boolean sourceStampTimestampEnabled,
+            HybridSignerConfig hybridSignerConfig,
             Integer minSdkVersion,
             int rotationMinSdkVersion,
             boolean rotationTargetsDevRelease,
@@ -158,6 +161,7 @@ public class ApkSigner {
         mSourceStampSigningCertificateLineage = sourceStampSigningCertificateLineage;
         mForceSourceStampOverwrite = forceSourceStampOverwrite;
         mSourceStampTimestampEnabled = sourceStampTimestampEnabled;
+        mHybridSignerConfig = hybridSignerConfig;
         mMinSdkVersion = minSdkVersion;
         mRotationMinSdkVersion = rotationMinSdkVersion;
         mRotationTargetsDevRelease = rotationTargetsDevRelease;
@@ -345,6 +349,9 @@ public class ApkSigner {
             if (mSourceStampSigningCertificateLineage != null) {
                 signerEngineBuilder.setSourceStampSigningCertificateLineage(
                         mSourceStampSigningCertificateLineage);
+            }
+            if (mHybridSignerConfig != null) {
+                signerEngineBuilder.setHybridSignerConfig(mHybridSignerConfig);
             }
             signerEngine = signerEngineBuilder.build();
         }
@@ -1250,6 +1257,103 @@ public class ApkSigner {
     }
 
     /**
+     * Configuration for a hybrid signer that consists of a classical signer and a PQC signer.
+     *
+     * <p>Use {@link HybridSignerConfig.Builder} to create a new instance.
+     */
+    public static class HybridSignerConfig {
+        private final SignerConfig mClassicalSignerConfig;
+        private final SignerConfig mPqcSignerConfig;
+        private final int mMinSdkVersion;
+
+        private HybridSignerConfig(Builder builder) {
+            mClassicalSignerConfig = builder.mClassicalSignerConfig;
+            mPqcSignerConfig = builder.mPqcSignerConfig;
+            mMinSdkVersion = builder.mMinSdkVersion;
+        }
+
+        /** Returns the classical {@link SignerConfig} for this hybrid signer. */
+        public SignerConfig getClassicalSignerConfig() {
+            return mClassicalSignerConfig;
+        }
+
+        /** Returns the PQC {@link SignerConfig} for this hybrid signer. */
+        public SignerConfig getPqcSignerConfig() {
+            return mPqcSignerConfig;
+        }
+
+        /** Returns the minimum SDK version for which this hybrid signer should be used. */
+        public int getMinSdkVersion() {
+            return mMinSdkVersion;
+        }
+
+        /** Builder of {@link HybridSignerConfig} instances. */
+        public static class Builder {
+            private SignerConfig mClassicalSignerConfig;
+            private SignerConfig mPqcSignerConfig;
+            private int mMinSdkVersion = 0;
+
+            /** Sets the classical signer config to the provided {@code classicalSignerConfig}. */
+            public Builder setClassicalSignerConfig(SignerConfig classicalSignerConfig) {
+                if (ApkSigningBlockUtils.isPqcSigner(classicalSignerConfig.getCertificates())) {
+                    throw new IllegalArgumentException(
+                            "The provided SignerConfig is not a classical signer");
+                }
+                mClassicalSignerConfig = classicalSignerConfig;
+                return this;
+            }
+
+            /** Sets the PQC signer config to the provided {@code pqcSignerConfig}. */
+            public Builder setPqcSignerConfig(SignerConfig pqcSignerConfig) {
+                if (!ApkSigningBlockUtils.isPqcSigner(pqcSignerConfig.getCertificates())) {
+                    throw new IllegalArgumentException(
+                            "The provided SignerConfig is not a PQC signer");
+                }
+                mPqcSignerConfig = pqcSignerConfig;
+                return this;
+            }
+
+            /**
+             * Sets the minimum SDK version on which the hybrid signer config should be verified.
+             *
+             * <p>Note, the minimum SDK version must be at least the value of the SDK version that
+             * first introduced support for the hybrid signature scheme (Android C); if the provided
+             * value is less than this, then an {@link IllegalArgumentException} will be thrown.
+             */
+            public Builder setMinSdkVersion(int minSdkVersion) {
+                if (minSdkVersion < V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT) {
+                    throw new IllegalArgumentException(
+                            "The provided minSdkVersion, "
+                                    + minSdkVersion
+                                    + ", is less than the first SDK version with v3.2 support, "
+                                    + V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT);
+                }
+                mMinSdkVersion = minSdkVersion;
+                return this;
+            }
+
+            /**
+             * Builds a HybridSignerConfig instance using the provided config values.
+             *
+             * <p>This method will throw an {@code IllegalStateException} if either of the {@link
+             * SignerConfig} instances have not been provided.
+             */
+            public HybridSignerConfig build() {
+                if (mClassicalSignerConfig == null) {
+                    throw new IllegalStateException(
+                            "A classical signer config must be provided to build a "
+                                    + "HybridSignerConfig");
+                }
+                if (mPqcSignerConfig == null) {
+                    throw new IllegalStateException(
+                            "A PQC signer config must be provided to build a HybridSignerConfig");
+                }
+                return new HybridSignerConfig(this);
+            }
+        }
+    }
+
+    /**
      * Builder of {@link ApkSigner} instances.
      *
      * <p>The builder requires the following information to construct a working {@code ApkSigner}:
@@ -1264,6 +1368,7 @@ public class ApkSigner {
     public static class Builder {
         private final List<SignerConfig> mSignerConfigs;
         private SignerConfig mSourceStampSignerConfig;
+        private HybridSignerConfig mHybridSignerConfig;
         private SigningCertificateLineage mSourceStampSigningCertificateLineage;
         private boolean mForceSourceStampOverwrite = false;
         private boolean mSourceStampTimestampEnabled = true;
@@ -1346,6 +1451,12 @@ public class ApkSigner {
         /** Sets the signing configuration of the source stamp to be embedded in the APK. */
         public Builder setSourceStampSignerConfig(SignerConfig sourceStampSignerConfig) {
             mSourceStampSignerConfig = sourceStampSignerConfig;
+            return this;
+        }
+
+        /** Sets the signing configuration of the hybrid signer to be embedded in the APK. */
+        public Builder setHybridSignerConfig(HybridSignerConfig hybridSignerConfig) {
+            mHybridSignerConfig = hybridSignerConfig;
             return this;
         }
 
@@ -1823,6 +1934,7 @@ public class ApkSigner {
                     mSourceStampSigningCertificateLineage,
                     mForceSourceStampOverwrite,
                     mSourceStampTimestampEnabled,
+                    mHybridSignerConfig,
                     mMinSdkVersion,
                     mRotationMinSdkVersion,
                     mRotationTargetsDevRelease,

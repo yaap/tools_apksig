@@ -16,6 +16,10 @@
 
 package com.android.apksig;
 
+import static com.android.apksig.ApkSigTestUtils.assertResultContainsSigners;
+import static com.android.apksig.ApkSigTestUtils.assertResultContainsV32Signers;
+import static com.android.apksig.ApkSigTestUtils.assertVerified;
+import static com.android.apksig.ApkSigTestUtils.getAllSubjectNamesFrom;
 import static com.android.apksig.ApkVerifier.Result.V3SchemeSignerInfo;
 import static com.android.apksig.ApkVerifierTest.assertVerificationWarning;
 import static com.android.apksig.SigningCertificateLineage.SignerCapabilities;
@@ -23,6 +27,7 @@ import static com.android.apksig.SigningCertificateLineageTest.assertLineageCont
 import static com.android.apksig.SigningCertificateLineageTest.assertLineageContainsExpectedSignersWithCapabilities;
 import static com.android.apksig.apk.ApkUtils.SOURCE_STAMP_CERTIFICATE_HASH_ZIP_ENTRY_NAME;
 import static com.android.apksig.apk.ApkUtils.findZipSections;
+import static com.android.apksig.internal.util.Resources.getDefaultSignerConfigFromResources;
 import static com.android.apksig.internal.util.Resources.EC_P256_2_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.EC_P256_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_AND_SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
@@ -35,6 +40,7 @@ import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_2_SIGN
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGNERS_1_NO_CAPS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGNERS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_TO_RSA_4096_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
@@ -42,6 +48,7 @@ import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_
 import static com.android.apksig.internal.util.Resources.TEST_GCP_KEY_RING;
 // END-AOSP
 import static com.android.apksig.internal.util.Resources.THIRD_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.getDeterministicDsaSignerConfigFromResources;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
@@ -3679,6 +3686,54 @@ public class ApkSignerTest {
     }
 
     @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testV32_originalSignerAndHybridBlock_signed() throws Exception {
+        // The new hybrid block allows a developer to begin the transition to PQC signing with a
+        // hybrid block that protects the APK with both the established classical signature
+        // algorithms along with the newly standardized ML-DSA PQC algorithm. This test verifies
+        // an APK can be signed with the new hybrid signing config.
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkSigner.SignerConfig originalSigner = getDefaultSignerConfigFromResources(
+                    FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+            SigningCertificateLineage hybridClassicalLineage =
+                    Resources.toSigningCertificateLineage(
+                            ApkSignerTest.class, LINEAGE_RSA_2048_2_SIGNERS_RESOURCE_NAME);
+            ApkSigner.SignerConfig hybridClassicalSigner = getDefaultSignerConfigFromResources(
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME, false,
+                    V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT, hybridClassicalLineage);
+            SigningCertificateLineage hybridPqcLineage = Resources.toSigningCertificateLineage(
+                    ApkSignerTest.class, LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME);
+            ApkSigner.SignerConfig hybridPqcSigner = getDefaultSignerConfigFromResources(
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME, false,
+                    V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT, hybridPqcLineage);
+            ApkSigner.HybridSignerConfig hybridSignerConfig =
+                    new ApkSigner.HybridSignerConfig.Builder()
+                            .setClassicalSignerConfig(hybridClassicalSigner)
+                            .setPqcSignerConfig(hybridPqcSigner)
+                            .build();
+
+            File signedApk = sign("original.apk",
+                    new ApkSigner.Builder(List.of(originalSigner))
+                            .setV1SigningEnabled(true)
+                            .setV2SigningEnabled(true)
+                            .setV3SigningEnabled(true)
+                            .setHybridSignerConfig(hybridSignerConfig));
+            ApkVerifier.Result result = verify(signedApk, null);
+
+            assertVerified(result);
+            assertResultContainsV32Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
     public void testV4_rotationMinSdkVersionT_signatureHasOrigAndRotatedKey() throws Exception {
         // When an APK is signed with a rotated key and the rotation-min-sdk-version X is set to T+,
         // a V3.1 block will be signed with the rotated signing key targeting X and later, and
@@ -3874,90 +3929,6 @@ public class ApkSignerTest {
     }
 
     /**
-     * Asserts the provided verification {@code result} contains the expected {@code signers} for
-     * each scheme that was used to verify the APK's signature.
-     */
-    static void assertResultContainsSigners(ApkVerifier.Result result, String... signers)
-            throws Exception {
-        assertResultContainsSigners(result, false, signers);
-    }
-
-    /**
-     * Asserts the provided verification {@code result} contains the expected {@code signers} for
-     * each scheme that was used to verify the APK's signature; if {@code rotationExpected} is set
-     * to {@code true}, then the first element in {@code signers} is treated as the expected
-     * original signer for any V1, V2, and V3 (where applicable) signatures, and the last element
-     * is the rotated expected signer for V3+.
-     */
-    static void assertResultContainsSigners(ApkVerifier.Result result,
-        boolean rotationExpected, String... signers) throws Exception {
-        // A result must be successfully verified before verifying any of the result's signers.
-        assertTrue(result.isVerified());
-
-        List<X509Certificate> expectedSigners = new ArrayList<>();
-        for (String signer : signers) {
-            ApkSigner.SignerConfig signerConfig = getDefaultSignerConfigFromResources(signer);
-            expectedSigners.addAll(signerConfig.getCertificates());
-        }
-        // If rotation is expected then the V1 and V2 signature should only be signed by the
-        // original signer.
-        List<X509Certificate> expectedV1Signers =
-            rotationExpected ? List.of(expectedSigners.get(0)) : expectedSigners;
-        List<X509Certificate> expectedV2Signers =
-            rotationExpected ? List.of(expectedSigners.get(0)) : expectedSigners;
-        // V3 only supports a single signer; if rotation is not expected or the V3.1 block contains
-        // the rotated signing key then the expected V3.0 signer should be the original signer.
-        List<X509Certificate> expectedV3Signers =
-            !rotationExpected || result.isVerifiedUsingV31Scheme()
-                ? List.of(expectedSigners.get(0))
-                : List.of(expectedSigners.get(expectedSigners.size() - 1));
-
-        if (result.isVerifiedUsingV1Scheme()) {
-            Set<X509Certificate> v1Signers = new HashSet<>();
-            for (ApkVerifier.Result.V1SchemeSignerInfo signer : result.getV1SchemeSigners()) {
-                v1Signers.add(signer.getCertificate());
-            }
-            assertTrue("Expected V1 signers: " + getAllSubjectNamesFrom(expectedV1Signers)
-                            + ", actual V1 signers: " + getAllSubjectNamesFrom(v1Signers),
-                    v1Signers.containsAll(expectedV1Signers));
-        }
-
-        if (result.isVerifiedUsingV2Scheme()) {
-            Set<X509Certificate> v2Signers = new HashSet<>();
-            for (ApkVerifier.Result.V2SchemeSignerInfo signer : result.getV2SchemeSigners()) {
-                v2Signers.add(signer.getCertificate());
-            }
-            assertTrue("Expected V2 signers: " + getAllSubjectNamesFrom(expectedV2Signers)
-                            + ", actual V2 signers: " + getAllSubjectNamesFrom(v2Signers),
-                    v2Signers.containsAll(expectedV2Signers));
-        }
-
-        if (result.isVerifiedUsingV3Scheme()) {
-            Set<X509Certificate> v3Signers = new HashSet<>();
-            for (V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
-                v3Signers.add(signer.getCertificate());
-            }
-            assertTrue("Expected V3 signers: " + getAllSubjectNamesFrom(expectedV3Signers)
-                            + ", actual V3 signers: " + getAllSubjectNamesFrom(v3Signers),
-                    v3Signers.containsAll(expectedV3Signers));
-        }
-
-        if (result.isVerifiedUsingV31Scheme()) {
-            Set<X509Certificate> v31Signers = new HashSet<>();
-            for (V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
-                v31Signers.add(signer.getCertificate());
-            }
-            // V3.1 only supports specifying signatures with a rotated signing key; if a V3.1
-            // signing block was verified then ensure it contains the expected rotated signer.
-            List<X509Certificate> expectedV31Signers = List
-                .of(expectedSigners.get(expectedSigners.size() - 1));
-            assertTrue("Expected V3.1 signers: " + getAllSubjectNamesFrom(expectedV31Signers)
-                    + ", actual V3.1 signers: " + getAllSubjectNamesFrom(v31Signers),
-                v31Signers.containsAll(expectedV31Signers));
-        }
-    }
-
-    /**
      * Asserts the provided verification {@code result} contains the expected V4 {@code signers}.
      */
     private static void assertResultContainsV4Signers(ApkVerifier.Result result, String... signers)
@@ -4053,21 +4024,6 @@ public class ApkSignerTest {
         fail("No V3.1 signer found targeting min SDK version " + targetSdkVersion
                 + ", dev release: " + signerTargetsDevRelease);
         return null;
-    }
-
-    /**
-     * Returns a comma delimited {@code String} containing all of the Subject Names from the
-     * provided {@code certificates}.
-     */
-    private static String getAllSubjectNamesFrom(Collection<X509Certificate> certificates) {
-        StringBuilder result = new StringBuilder();
-        for (X509Certificate certificate : certificates) {
-            if (result.length() > 0) {
-                result.append(", ");
-            }
-            result.append(certificate.getSubjectDN().getName());
-        }
-        return result.toString();
     }
 
     private static boolean resourceZipFileContains(String resourceName, String zipEntryName)
@@ -4241,10 +4197,6 @@ public class ApkSignerTest {
         return builder.build().verify();
     }
 
-    private static void assertVerified(ApkVerifier.Result result) {
-        ApkVerifierTest.assertVerified(result);
-    }
-
     private static void assertSourceStampVerified(File signedApk, ApkVerifier.Result result)
             throws ApkSigningBlockUtils.SignatureNotFoundException,
                     IOException,
@@ -4265,69 +4217,5 @@ public class ApkSignerTest {
     private void assertFileContentsEqual(File first, File second) throws IOException {
         assertArrayEquals(Files.readAllBytes(Paths.get(first.getPath())),
                 Files.readAllBytes(Paths.get(second.getPath())));
-    }
-
-    private static List<ApkSigner.SignerConfig> getSignerConfigsFromResources(
-            String... signerNames) throws Exception {
-        List<ApkSigner.SignerConfig> signerConfigs = new ArrayList<>();
-        for (String signerName : signerNames) {
-            signerConfigs.add(getDefaultSignerConfigFromResources(signerName));
-        }
-        return signerConfigs;
-    }
-
-    private static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
-            String keyNameInResources) throws Exception {
-        return getDefaultSignerConfigFromResources(keyNameInResources, false);
-    }
-
-    private static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
-            String keyNameInResources, boolean deterministicDsaSigning) throws Exception {
-        return getDefaultSignerConfigFromResources(
-                keyNameInResources, deterministicDsaSigning, 0, null);
-    }
-
-    /**
-     * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in
-     * resources with the file prefix {@code keyNameInResources} targeting {@code targetSdkVersion}
-     * with lineage {@code lineage} and using deterministic DSA signing when {@code
-     * deterministicDsaSigning} is set to true.
-     */
-    private static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
-            String keyNameInResources,
-            boolean deterministicDsaSigning,
-            int targetSdkVersion,
-            SigningCertificateLineage lineage)
-            throws Exception {
-        PrivateKey privateKey =
-                Resources.toPrivateKey(ApkSignerTest.class, keyNameInResources + ".pk8");
-        List<X509Certificate> certs =
-                Resources.toCertificateChain(ApkSignerTest.class, keyNameInResources + ".x509.pem");
-        ApkSigner.SignerConfig.Builder signerConfigBuilder =
-                new ApkSigner.SignerConfig.Builder(
-                        keyNameInResources,
-                        new KeyConfig.Jca(privateKey),
-                        certs,
-                        deterministicDsaSigning);
-        if (targetSdkVersion > 0) {
-            signerConfigBuilder.setLineageForMinSdkVersion(lineage, targetSdkVersion);
-        }
-        return signerConfigBuilder.build();
-    }
-
-    private static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
-            String keyNameInResources, String certNameInResources) throws Exception {
-        PrivateKey privateKey =
-                Resources.toPrivateKey(ApkSignerTest.class, keyNameInResources + ".pk8");
-        List<X509Certificate> certs =
-                Resources.toCertificateChain(ApkSignerTest.class, certNameInResources);
-        return new ApkSigner.SignerConfig.Builder(
-                        keyNameInResources, new KeyConfig.Jca(privateKey), certs)
-                .build();
-    }
-
-    private static ApkSigner.SignerConfig getDeterministicDsaSignerConfigFromResources(
-            String keyNameInResources) throws Exception {
-        return getDefaultSignerConfigFromResources(keyNameInResources, true);
     }
 }
