@@ -16,12 +16,15 @@
 
 package com.android.apksig;
 
-import static com.android.apksig.ApkSignerTest.assertResultContainsSigners;
+import static com.android.apksig.ApkSigTestUtils.assertResultContainsSigners;
+import static com.android.apksig.ApkSigTestUtils.assertResultContainsV32Signers;
+import static com.android.apksig.ApkSigTestUtils.assertVerified;
 import static com.android.apksig.ApkSignerTest.assertV31SignerTargetsMinApiLevel;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V3;
 import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
 
 import static org.junit.Assert.assertEquals;
@@ -47,6 +50,7 @@ import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 
 import org.junit.Assume;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -1853,6 +1857,30 @@ public class ApkVerifierTest {
     }
 
     @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_originalSignerAndHybridBlock_verifies() throws Exception {
+        // The new hybrid block allows a developer to begin the transition to PQC signing with a
+        // hybrid block that protects the APK with both the established classical signature
+        // algorithms along with the newly standardized ML-DSA PQC algorithm. This test verifies
+        // an APK signed with the new hybrid block targeting the development release for Android C
+        // and the original signer in the v3.0 block can be successfully verified.
+        // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
+        // a new version that supports ML-DSA.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-rsa-2048_2-mldsa-tgt-36-v3-rsa-2048.apk");
+
+            assertVerified(result);
+            assertResultContainsV32Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
     public void verify41_v41DigestMismatchedWithV31_reportsError() throws Exception {
         // This test verifies a digest mismatch between the v4.1 signature and the v3.1 signature
         // is properly reported during v4 signature verification.
@@ -2059,83 +2087,7 @@ public class ApkVerifierTest {
         return builder.build().verifySourceStamp(expectedCertDigest);
     }
 
-    static void assertVerified(ApkVerifier.Result result) {
-        assertVerified(result, "APK");
-    }
-
-    static void assertVerified(ApkVerifier.Result result, String apkId) {
-        if (result.isVerified()) {
-            return;
-        }
-
-        StringBuilder msg = new StringBuilder();
-        for (IssueWithParams issue : result.getErrors()) {
-            if (msg.length() > 0) {
-                msg.append('\n');
-            }
-            msg.append(issue);
-        }
-        for (ApkVerifier.Result.V1SchemeSignerInfo signer : result.getV1SchemeSigners()) {
-            String signerName = signer.getName();
-            for (IssueWithParams issue : signer.getErrors()) {
-                if (msg.length() > 0) {
-                    msg.append('\n');
-                }
-                msg.append("JAR signer ")
-                        .append(signerName)
-                        .append(": ")
-                        .append(issue.getIssue())
-                        .append(": ")
-                        .append(issue);
-            }
-        }
-        for (ApkVerifier.Result.V2SchemeSignerInfo signer : result.getV2SchemeSigners()) {
-            String signerName = "signer #" + (signer.getIndex() + 1);
-            for (IssueWithParams issue : signer.getErrors()) {
-                if (msg.length() > 0) {
-                    msg.append('\n');
-                }
-                msg.append("APK Signature Scheme v2 signer ")
-                        .append(signerName)
-                        .append(": ")
-                        .append(issue.getIssue())
-                        .append(": ")
-                        .append(issue);
-            }
-        }
-        for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
-            String signerName = "signer #" + (signer.getIndex() + 1);
-            for (IssueWithParams issue : signer.getErrors()) {
-                if (msg.length() > 0) {
-                    msg.append('\n');
-                }
-                msg.append("APK Signature Scheme v3 signer ")
-                        .append(signerName)
-                        .append(": ")
-                        .append(issue.getIssue())
-                        .append(": ")
-                        .append(issue);
-            }
-        }
-        for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
-            String signerName = "signer #" + (signer.getIndex() + 1);
-            for (IssueWithParams issue : signer.getErrors()) {
-                if (msg.length() > 0) {
-                    msg.append('\n');
-                }
-                msg.append("APK Signature Scheme v3.1 signer ")
-                        .append(signerName)
-                        .append(": ")
-                        .append(issue.getIssue())
-                        .append(": ")
-                        .append(issue);
-            }
-        }
-
-        fail(apkId + " did not verify: " + msg);
-    }
-
-    private void assertVerified(
+    private void assertVerifiedForSdkRange(
             String apkFilenameInResources,
             Integer minSdkVersionOverride,
             Integer maxSdkVersionOverride)
@@ -2331,7 +2283,7 @@ public class ApkVerifierTest {
         for (String arg : args) {
             String apkFilenameInResources =
                     String.format(Locale.US, apkFilenamePatternInResources, arg);
-            assertVerified(apkFilenameInResources, minSdkVersionOverride, maxSdkVersionOverride);
+            assertVerifiedForSdkRange(apkFilenameInResources, minSdkVersionOverride, maxSdkVersionOverride);
         }
     }
 

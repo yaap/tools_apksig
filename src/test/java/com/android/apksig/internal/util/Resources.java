@@ -16,6 +16,7 @@
 
 package com.android.apksig.internal.util;
 
+import com.android.apksig.ApkSigner;
 import com.android.apksig.ApkSignerTest;
 import com.android.apksig.KeyConfig;
 import com.android.apksig.SigningCertificateLineage;
@@ -96,6 +97,83 @@ public final class Resources {
 
     public static final String LINEAGE_EC_P256_2_SIGNERS_RESOURCE_NAME =
             "ec-p256-lineage-2-signers";
+
+    public static final String LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME =
+            "rsa-mldsa-lineage-2-signers";
+
+    /**
+     * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in the
+     * resources with the file prefix {@code keyNameInResources}.
+     */
+    public static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
+            String keyNameInResources) throws Exception {
+        return getDefaultSignerConfigFromResources(keyNameInResources, false);
+    }
+
+    /**
+     * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in the
+     * resources with the file prefix {@code keyNameInResources} and uses deterministic DSA signing
+     * when {@code deterministicDsaSigning} is set to true.
+     */
+    public static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
+            String keyNameInResources, boolean deterministicDsaSigning) throws Exception {
+        return getDefaultSignerConfigFromResources(
+                keyNameInResources, deterministicDsaSigning, 0, null);
+    }
+
+    /**
+     * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in the
+     * resources with the file prefix {@code keyNameInResources} targeting {@code targetSdkVersion}
+     * with lineage {@code lineage} and using deterministic DSA signing when {@code
+     * deterministicDsaSigning} is set to true.
+     */
+    public static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
+            String keyNameInResources,
+            boolean deterministicDsaSigning,
+            int targetSdkVersion,
+            SigningCertificateLineage lineage)
+            throws Exception {
+        PrivateKey privateKey =
+                Resources.toPrivateKey(ApkSignerTest.class, keyNameInResources + ".pk8");
+        List<X509Certificate> certs =
+                Resources.toCertificateChain(ApkSignerTest.class, keyNameInResources + ".x509.pem");
+        ApkSigner.SignerConfig.Builder signerConfigBuilder =
+                new ApkSigner.SignerConfig.Builder(
+                        keyNameInResources,
+                        new KeyConfig.Jca(privateKey),
+                        certs,
+                        deterministicDsaSigning);
+        if (targetSdkVersion > 0) {
+            signerConfigBuilder.setLineageForMinSdkVersion(lineage, targetSdkVersion);
+        }
+        return signerConfigBuilder.build();
+    }
+
+    /**
+     * Returns a new {@link ApkSigner.SignerConfig} with the private key in the resources with the
+     * file prefix {@code keyNameInResources} and the certificate with the file prefix {@code
+     * certNameInResources}.
+     */
+    public static ApkSigner.SignerConfig getDefaultSignerConfigFromResources(
+            String keyNameInResources, String certNameInResources) throws Exception {
+        PrivateKey privateKey =
+                Resources.toPrivateKey(ApkSignerTest.class, keyNameInResources + ".pk8");
+        List<X509Certificate> certs =
+                Resources.toCertificateChain(ApkSignerTest.class, certNameInResources);
+        return new ApkSigner.SignerConfig.Builder(
+                keyNameInResources, new KeyConfig.Jca(privateKey), certs)
+                .build();
+    }
+
+    /**
+     * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in the
+     * resources with the file prefix {@code keyNameInResources} that uses deterministic DSA
+     * signing.
+     */
+    public static ApkSigner.SignerConfig getDeterministicDsaSignerConfigFromResources(
+            String keyNameInResources) throws Exception {
+        return getDefaultSignerConfigFromResources(keyNameInResources, true);
+    }
 
     public static byte[] toByteArray(Class<?> cls, String resourceName) throws IOException {
         try (InputStream in = cls.getResourceAsStream(resourceName)) {

@@ -21,10 +21,14 @@ import static com.android.apksig.apk.ApkUtils.computeSha256DigestBytes;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERITY_PADDING_BLOCK_ID;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V2;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3;
+import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V32;
 import static com.android.apksig.internal.apk.ApkSigningBlockUtils.VERSION_JAR_SIGNATURE_SCHEME;
+import static com.android.apksig.internal.apk.v3.V3SchemeConstants.DEV_RELEASE;
 import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V31_SUPPORT;
 import static com.android.apksig.internal.apk.v3.V3SchemeConstants.MIN_SDK_WITH_V3_SUPPORT;
+import static com.android.apksig.internal.apk.v3.V3SchemeConstants.PROD_RELEASE;
 
+import com.android.apksig.ApkSigner.HybridSignerConfig;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkUtils;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
@@ -108,6 +112,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
     private final SignerConfig mSourceStampSignerConfig;
     private final SigningCertificateLineage mSourceStampSigningCertificateLineage;
     private final boolean mSourceStampTimestampEnabled;
+    private final HybridSignerConfig mHybridSignerConfig;
     private final int mMinSdkVersion;
     private final SigningCertificateLineage mSigningCertificateLineage;
 
@@ -191,6 +196,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
             SignerConfig sourceStampSignerConfig,
             SigningCertificateLineage sourceStampSigningCertificateLineage,
             boolean sourceStampTimestampEnabled,
+            HybridSignerConfig hybridSignerConfig,
             int minSdkVersion,
             boolean v1SigningEnabled,
             boolean v2SigningEnabled,
@@ -220,6 +226,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         mSourceStampSignerConfig = sourceStampSignerConfig;
         mSourceStampSigningCertificateLineage = sourceStampSigningCertificateLineage;
         mSourceStampTimestampEnabled = sourceStampTimestampEnabled;
+        mHybridSignerConfig = hybridSignerConfig;
         mMinSdkVersion = minSdkVersion;
         mSigningCertificateLineage = signingCertificateLineage;
 
@@ -394,8 +401,8 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 // If the previous signer was targeting a development release, then the current
                 // signer's maxSdkVersion should overlap with the previous signer's minSdkVersion
                 // to ensure the current signer applies to the production release.
-                ApkSigningBlockUtils.SignerConfig prevSigner = processedConfigs.get(
-                        processedConfigs.size() - 1);
+                ApkSigningBlockUtils.SignerConfig prevSigner =
+                        processedConfigs.get(processedConfigs.size() - 1);
                 if (prevSigner.signerTargetsDevRelease) {
                     config.maxSdkVersion = prevSigner.minSdkVersion;
                 } else {
@@ -409,8 +416,8 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
             X509Certificate signerCert = config.certificates.get(0);
             if (config.signingCertificateLineage != null
                     && !config.signingCertificateLineage.isCertificateLatestInLineage(signerCert)) {
-                config.signingCertificateLineage = config.signingCertificateLineage.getSubLineage(
-                        signerCert);
+                config.signingCertificateLineage =
+                        config.signingCertificateLineage.getSubLineage(signerCert);
             }
             int algorithmMinSdkVersion = getMinSdkFromV3SignerConfig(config);
             // Ensure that the targeted SDK version for the signer is at least the platform SDK
@@ -485,8 +492,9 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
     }
 
     private V4SchemeSigner.SignerConfig createV4SignerConfig() throws InvalidKeyException {
-        List<ApkSigningBlockUtils.SignerConfig> v4Configs = createSigningBlockSignerConfigs(true,
-                ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4);
+        List<ApkSigningBlockUtils.SignerConfig> v4Configs =
+                createSigningBlockSignerConfigs(
+                        true, ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V4);
         if (v4Configs.size() != 1) {
             // V4 uses signer config to connect back to v3. Use the same filtering logic.
             v4Configs = processV3Configs(v4Configs);
@@ -520,10 +528,100 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 /* apkSigningBlockPaddingSupported= */ false,
                 ApkSigningBlockUtils.VERSION_SOURCE_STAMP);
         if (mSourceStampSigningCertificateLineage != null) {
-            config.signingCertificateLineage = mSourceStampSigningCertificateLineage.getSubLineage(
-                    config.certificates.get(0));
+            config.signingCertificateLineage =
+                    mSourceStampSigningCertificateLineage.getSubLineage(config.certificates.get(0));
         }
         return config;
+    }
+
+    private List<ApkSigningBlockUtils.SignerConfig> createHybridSignerConfig(
+            boolean apkSigningBlockPaddingSupported) throws InvalidKeyException {
+        ApkSigner.SignerConfig hybridClassicalSigner =
+                mHybridSignerConfig.getClassicalSignerConfig();
+        ApkSigningBlockUtils.SignerConfig classicalSignerConfig =
+                createSigningBlockSignerConfig(
+                        createEngineSignerConfig(
+                                hybridClassicalSigner,
+                                Math.max(
+                                        mHybridSignerConfig.getMinSdkVersion(),
+                                        V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT)),
+                        apkSigningBlockPaddingSupported,
+                        ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3);
+        ApkSigner.SignerConfig hybridPqcSigner = mHybridSignerConfig.getPqcSignerConfig();
+        ApkSigningBlockUtils.SignerConfig pqcSignerConfig =
+                createSigningBlockSignerConfig(
+                        createEngineSignerConfig(
+                                hybridPqcSigner,
+                                Math.max(
+                                        mHybridSignerConfig.getMinSdkVersion(),
+                                        V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT)),
+                        apkSigningBlockPaddingSupported,
+                        ApkSigningBlockUtils.VERSION_APK_SIGNATURE_SCHEME_V3);
+        // Verify both of the signers have the same signing history.
+        try {
+            if (!classicalSignerConfig.signingCertificateLineage.containsSameHistory(
+                    pqcSignerConfig.signingCertificateLineage)) {
+                throw new IllegalStateException(
+                        "The signers in the hybrid signer config do not have the same signing "
+                                + "history");
+            }
+        } catch (CertificateEncodingException e) {
+            throw new IllegalStateException(
+                    "A certificate in one of the hybrid signer's history could not be parsed: "
+                            + e.getMessage(),
+                    e);
+        }
+
+        // Verify both of the signers are targeting the same SDK range.
+        if (classicalSignerConfig.minSdkVersion != pqcSignerConfig.minSdkVersion
+                || classicalSignerConfig.maxSdkVersion != pqcSignerConfig.maxSdkVersion) {
+            throw new IllegalStateException(
+                    "When signing with the v3.2 signature scheme, both signers must target the "
+                            + "same SDK range; classical: "
+                            + classicalSignerConfig.minSdkVersion
+                            + "-"
+                            + classicalSignerConfig.maxSdkVersion
+                            + ", PQC: "
+                            + pqcSignerConfig.minSdkVersion
+                            + "-"
+                            + pqcSignerConfig.maxSdkVersion);
+        }
+        // If the caller specified a later release than the first one supported by the PQC signature
+        // algorithm, then use that version as the minimum for hybrid targeting.
+        int hybridMinSdkVersion =
+                Math.max(
+                        getMinSdkFromV3SignerConfig(pqcSignerConfig),
+                        pqcSignerConfig.minSdkVersion);
+        boolean hybridTargetsDevRelease = hybridMinSdkVersion == DEV_RELEASE;
+        if (hybridTargetsDevRelease) {
+            hybridMinSdkVersion = PROD_RELEASE;
+        }
+        classicalSignerConfig.minSdkVersion = hybridMinSdkVersion;
+        classicalSignerConfig.signerTargetsDevRelease = hybridTargetsDevRelease;
+        classicalSignerConfig.maxSdkVersion = Integer.MAX_VALUE;
+        pqcSignerConfig.minSdkVersion = hybridMinSdkVersion;
+        pqcSignerConfig.signerTargetsDevRelease = hybridTargetsDevRelease;
+        pqcSignerConfig.maxSdkVersion = Integer.MAX_VALUE;
+
+        List<ApkSigningBlockUtils.SignerConfig> hybridSignerConfigs = new ArrayList<>(2);
+        hybridSignerConfigs.add(classicalSignerConfig);
+        hybridSignerConfigs.add(pqcSignerConfig);
+        return hybridSignerConfigs;
+    }
+
+    private SignerConfig createEngineSignerConfig(
+            ApkSigner.SignerConfig signerConfig, int signerMinSdkVersion) {
+        SignerConfig.Builder signerConfigBuilder =
+                new SignerConfig.Builder(
+                        signerConfig.getName(),
+                        signerConfig.getKeyConfig(),
+                        signerConfig.getCertificates(),
+                        signerConfig.getDeterministicDsaSigning());
+        SigningCertificateLineage signerLineage = signerConfig.getSigningCertificateLineage();
+        if (signerMinSdkVersion > 0) {
+            signerConfigBuilder.setLineageForMinSdkVersion(signerLineage, signerMinSdkVersion);
+        }
+        return signerConfigBuilder.build();
     }
 
     private int getMinSdkFromV3SignerConfig(ApkSigningBlockUtils.SignerConfig signerConfig) {
@@ -1096,6 +1194,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         List<Pair<byte[], Integer>> signingSchemeBlocks = new ArrayList<>();
         ApkSigningBlockUtils.SigningSchemeBlockAndDigests v2SigningSchemeBlockAndDigests = null;
         ApkSigningBlockUtils.SigningSchemeBlockAndDigests v3SigningSchemeBlockAndDigests = null;
+        ApkSigningBlockUtils.SigningSchemeBlockAndDigests v32SigningSchemeBlockAndDigests = null;
         // If the engine is configured to preserve previous signature blocks and any were found in
         // the existing APK signing block then add them to the list to be used to generate the
         // new APK signing block.
@@ -1126,21 +1225,46 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     createV3SignerConfigs(apkSigningBlockPaddingSupported);
             List<ApkSigningBlockUtils.SignerConfig> v31SignerConfigs = processV31SignerConfigs(
                     v3SignerConfigs);
-            if (v31SignerConfigs != null && v31SignerConfigs.size() > 0) {
-                ApkSigningBlockUtils.SigningSchemeBlockAndDigests
-                        v31SigningSchemeBlockAndDigests =
-                        new V3SchemeSigner.Builder(beforeCentralDir, zipCentralDirectory, eocd,
-                                v31SignerConfigs)
+            int v32MinSdkVersion = 0;
+            if (mHybridSignerConfig != null) {
+                List<ApkSigningBlockUtils.SignerConfig> hybridSignerConfigs =
+                        createHybridSignerConfig(apkSigningBlockPaddingSupported);
+                v32MinSdkVersion = hybridSignerConfigs.get(0).minSdkVersion;
+                v32SigningSchemeBlockAndDigests =
+                        new V3SchemeSigner.Builder(
+                                        beforeCentralDir,
+                                        zipCentralDirectory,
+                                        eocd,
+                                        hybridSignerConfigs)
                                 .setRunnablesExecutor(mExecutor)
-                                .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID)
+                                .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID)
                                 .build()
                                 .generateApkSignatureSchemeV3BlockAndDigests();
+                signingSchemeBlocks.add(v32SigningSchemeBlockAndDigests.signingSchemeBlock);
+            }
+            if (v31SignerConfigs != null && v31SignerConfigs.size() > 0) {
+                V3SchemeSigner.Builder v31SignerBuilder =
+                        new V3SchemeSigner.Builder(
+                                        beforeCentralDir,
+                                        zipCentralDirectory,
+                                        eocd,
+                                        v31SignerConfigs)
+                                .setRunnablesExecutor(mExecutor)
+                                .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID);
+                if (v32MinSdkVersion > 0) {
+                    v31SignerBuilder.setMinSdkVersionForV32(v32MinSdkVersion);
+                }
+                ApkSigningBlockUtils.SigningSchemeBlockAndDigests v31SigningSchemeBlockAndDigests =
+                        v31SignerBuilder.build().generateApkSignatureSchemeV3BlockAndDigests();
                 signingSchemeBlocks.add(v31SigningSchemeBlockAndDigests.signingSchemeBlock);
             }
             V3SchemeSigner.Builder builder = new V3SchemeSigner.Builder(beforeCentralDir,
                 zipCentralDirectory, eocd, v3SignerConfigs)
                 .setRunnablesExecutor(mExecutor)
                 .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID);
+            if (v32MinSdkVersion > 0) {
+                builder.setMinSdkVersionForV32(v32MinSdkVersion);
+            }
             if (v31SignerConfigs != null && !v31SignerConfigs.isEmpty()) {
                 // The V3.1 stripping protection writes the minimum SDK version from the targeted
                 // signers as an additional attribute in the V3.0 signing block.
@@ -1157,6 +1281,11 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     createSourceStampSignerConfig();
             Map<Integer, Map<ContentDigestAlgorithm, byte[]>> signatureSchemeDigestInfos =
                     new HashMap<>();
+            if (v32SigningSchemeBlockAndDigests != null) {
+                signatureSchemeDigestInfos.put(
+                        VERSION_APK_SIGNATURE_SCHEME_V32,
+                        v32SigningSchemeBlockAndDigests.digestInfo);
+            }
             if (mV3SigningEnabled) {
                 signatureSchemeDigestInfos.put(
                         VERSION_APK_SIGNATURE_SCHEME_V3, v3SigningSchemeBlockAndDigests.digestInfo);
@@ -1919,7 +2048,6 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 return this;
             }
 
-
             /**
              * Returns a new {@code SignerConfig} instance configured based on the configuration of
              * this builder.
@@ -1936,6 +2064,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         private List<SignerConfig> mTargetedSignerConfigs;
         private SignerConfig mStampSignerConfig;
         private SigningCertificateLineage mSourceStampSigningCertificateLineage;
+        private HybridSignerConfig mHybridSignerConfig;
         private boolean mSourceStampTimestampEnabled = true;
         private final int mMinSdkVersion;
 
@@ -2201,6 +2330,7 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     mStampSignerConfig,
                     mSourceStampSigningCertificateLineage,
                     mSourceStampTimestampEnabled,
+                    mHybridSignerConfig,
                     mMinSdkVersion,
                     mV1SigningEnabled,
                     mV2SigningEnabled,
@@ -2234,6 +2364,12 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
          */
         public Builder setSourceStampTimestampEnabled(boolean value) {
             mSourceStampTimestampEnabled = value;
+            return this;
+        }
+
+        /** Sets the signing configuration of the hybrid signer to be embedded in th APK. */
+        public Builder setHybridSignerConfig(HybridSignerConfig hybridSignerConfig) {
+            mHybridSignerConfig = hybridSignerConfig;
             return this;
         }
 

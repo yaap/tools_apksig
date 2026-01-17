@@ -109,6 +109,7 @@ public class ApkSigningBlockUtils {
     public static final int VERSION_APK_SIGNATURE_SCHEME_V2 = 2;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V3 = 3;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V31 = 31;
+    public static final int VERSION_APK_SIGNATURE_SCHEME_V32 = 32;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V4 = 4;
 
     /**

@@ -158,6 +158,7 @@ public class ApkSignerTool {
         boolean minSdkVersionSpecified = false;
         int maxSdkVersion = Integer.MAX_VALUE;
         int rotationMinSdkVersion = V3SchemeConstants.DEFAULT_ROTATION_MIN_SDK_VERSION;
+        int hybridConfigMinSdkVersion = V3SchemeConstants.DEFAULT_HYBRID_CONFIG_MIN_SDK_VERSION;
         boolean rotationTargetsDevRelease = false;
         List<SignerParams> signers = new ArrayList<>(1);
         SignerParams signerParams = new SignerParams();
@@ -227,8 +228,8 @@ public class ApkSignerTool {
                     signers.add(signerParams);
                     signerParams = new SignerParams();
                 }
-                signerParams.setMinSdkVersion(optionsParser.getRequiredIntValue(
-                        "Mininimum API Level for signing config"));
+                signerParams.setMinSdkVersion(
+                        optionsParser.getRequiredIntValue("Minimum API Level for signing config"));
             } else if ("ks".equals(optionName)) {
                 signerParams.setKeystoreFile(optionsParser.getRequiredValue("KeyStore file"));
             } else if ("ks-key-alias".equals(optionName)) {
@@ -279,6 +280,25 @@ public class ApkSignerTool {
                 File lineageFile = new File(
                         optionsParser.getRequiredValue("Lineage file for signing config"));
                 signerParams.setSigningCertificateLineage(getLineageFromInputFile(lineageFile));
+            } else if ("hybrid-signer-role".equals(optionName)) {
+                String hybridSignerRole =
+                        optionsParser.getRequiredValue("Role for the hybrid signer");
+                switch (hybridSignerRole.toLowerCase()) {
+                    case "classical":
+                        signerParams.setSignerRole(SignerParams.SignerRole.HYBRID_CLASSICAL);
+                        break;
+                    case "pqc":
+                        signerParams.setSignerRole(SignerParams.SignerRole.HYBRID_PQC);
+                        break;
+                    default:
+                        throw new ParameterException(
+                                "The hybrid-signer-role option requires a value of either "
+                                        + "'classical' or 'pqc' for the signer");
+                }
+            } else if ("hybrid-min-sdk-version".equals(optionName)) {
+                hybridConfigMinSdkVersion =
+                        optionsParser.getRequiredIntValue(
+                                "Minimum API Level for hybrid signing config");
             } else if ("lineage".equals(optionName)) {
                 File lineageFile = new File(optionsParser.getRequiredValue("Lineage file"));
                 lineage = getLineageFromInputFile(lineageFile);
@@ -360,17 +380,62 @@ public class ApkSignerTool {
 
         ApkSigner.SignerConfig sourceStampSignerConfig = null;
         List<ApkSigner.SignerConfig> signerConfigs = new ArrayList<>(signers.size());
+        ApkSigner.SignerConfig hybridPqcSigner = null;
+        ApkSigner.SignerConfig hybridClassicalSigner = null;
+        ApkSigner.HybridSignerConfig hybridSignerConfig = null;
         int signerNumber = 0;
         try (PasswordRetriever passwordRetriever = new PasswordRetriever()) {
             for (SignerParams signer : signers) {
-                signerNumber++;
-                signer.setName("signer #" + signerNumber);
+                switch (signer.getSignerRole()) {
+                    case SINGLE_SIGNER:
+                        signerNumber++;
+                        signer.setName("signer #" + signerNumber);
+                        break;
+                    case HYBRID_CLASSICAL:
+                        signer.setName("hybrid classical signer");
+                        if (signer.getMinSdkVersion() == 0) {
+                            signer.setMinSdkVersion(hybridConfigMinSdkVersion);
+                        }
+                        break;
+                    case HYBRID_PQC:
+                        signer.setName("hybrid PQC signer");
+                        if (signer.getMinSdkVersion() == 0) {
+                            signer.setMinSdkVersion(hybridConfigMinSdkVersion);
+                        }
+                        break;
+                }
                 ApkSigner.SignerConfig signerConfig = getSignerConfig(signer, passwordRetriever,
                         deterministicDsaSigning);
                 if (signerConfig == null) {
                     return;
                 }
-                signerConfigs.add(signerConfig);
+                switch (signer.getSignerRole()) {
+                    case SINGLE_SIGNER:
+                        signerConfigs.add(signerConfig);
+                        break;
+                    case HYBRID_CLASSICAL:
+                        hybridClassicalSigner = signerConfig;
+                        break;
+                    case HYBRID_PQC:
+                        hybridPqcSigner = signerConfig;
+                        break;
+                }
+            }
+            if (hybridClassicalSigner != null || hybridPqcSigner != null) {
+                if (hybridClassicalSigner == null || hybridPqcSigner == null) {
+                    throw new IllegalStateException(
+                            "When specifying a hybrid signing config, both classical and PQC "
+                                    + "signers must be specified; received classical: "
+                                    + hybridClassicalSigner
+                                    + ", PQC: "
+                                    + hybridPqcSigner);
+                }
+                hybridSignerConfig =
+                        new ApkSigner.HybridSignerConfig.Builder()
+                                .setClassicalSignerConfig(hybridClassicalSigner)
+                                .setPqcSignerConfig(hybridPqcSigner)
+                                .setMinSdkVersion(hybridConfigMinSdkVersion)
+                                .build();
             }
             if (sourceStampFlagFound) {
                 sourceStampSignerParams.setName("stamp signer");
@@ -425,6 +490,9 @@ public class ApkSignerTool {
         if (sourceStampSignerConfig != null) {
             apkSignerBuilder.setSourceStampSignerConfig(sourceStampSignerConfig)
                     .setSourceStampSigningCertificateLineage(sourceStampLineage);
+        }
+        if (hybridSignerConfig != null) {
+            apkSignerBuilder.setHybridSignerConfig(hybridSignerConfig);
         }
         ApkSigner apkSigner = apkSignerBuilder.build();
         try {
@@ -639,6 +707,9 @@ public class ApkSignerTool {
                         "Verified using v3.1 scheme (APK Signature Scheme v3.1): "
                                 + result.isVerifiedUsingV31Scheme());
                 System.out.println(
+                        "Verified using v3.2 scheme (APK Signature Scheme v3.2): "
+                                + result.isVerifiedUsingV32Scheme());
+                System.out.println(
                         "Verified using v4 scheme (APK Signature Scheme v4): "
                                 + result.isVerifiedUsingV4Scheme());
                 System.out.println("Verified for SourceStamp: " + result.isSourceStampVerified());
@@ -647,6 +718,22 @@ public class ApkSignerTool {
                 }
             }
             if (printCerts) {
+                if (result.isVerifiedUsingV32Scheme()) {
+                    ApkVerifier.Result.V3SchemeSignerInfo classicalSigner =
+                            result.getV32SchemeSigner().getClassicalSignerInfo();
+                    ApkVerifier.Result.V3SchemeSignerInfo pqcSigner =
+                            result.getV32SchemeSigner().getPqcSignerInfo();
+                    printCertificate(
+                            classicalSigner.getCertificate(),
+                            getV3SignerName(classicalSigner, "Hybrid classical signer"),
+                            verbose,
+                            printCertsPem);
+                    printCertificate(
+                            pqcSigner.getCertificate(),
+                            getV3SignerName(pqcSigner, "Hybrid PQC signer"),
+                            verbose,
+                            printCertsPem);
+                }
                 // The v3.1 signature scheme allows key rotation to target T+ while the original
                 // signing key can still be used with v3.0; if a v3.1 block is present then also
                 // include the target SDK versions for both rotation and the original signing key.
@@ -654,18 +741,18 @@ public class ApkSignerTool {
                     for (ApkVerifier.Result.V3SchemeSignerInfo signer :
                             result.getV31SchemeSigners()) {
 
-                        printCertificate(signer.getCertificate(),
-                                "Signer (minSdkVersion=" + signer.getMinSdkVersion()
-                                        + (signer.getRotationTargetsDevRelease()
-                                        ? " (dev release=true)" : "")
-                                        + ", maxSdkVersion=" + signer.getMaxSdkVersion() + ")",
-                                verbose, printCertsPem);
+                        printCertificate(
+                                signer.getCertificate(),
+                                getV3SignerName(signer, "V3.1 Signer"),
+                                verbose,
+                                printCertsPem);
                     }
                     for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV3SchemeSigners()) {
-                        printCertificate(signer.getCertificate(),
-                                "Signer (minSdkVersion=" + signer.getMinSdkVersion()
-                                        + ", maxSdkVersion=" + signer.getMaxSdkVersion() + ")",
-                                verbose, printCertsPem);
+                        printCertificate(
+                                signer.getCertificate(),
+                                getV3SignerName(signer, "V3.0 Signer"),
+                                verbose,
+                                printCertsPem);
                     }
                 } else {
                     int signerNumber = 0;
@@ -733,9 +820,7 @@ public class ApkSignerTool {
             }
         }
         for (ApkVerifier.Result.V3SchemeSignerInfo signer : result.getV31SchemeSigners()) {
-            String signerName = "signer #" + (signer.getIndex() + 1) + "(minSdkVersion="
-                    + signer.getMinSdkVersion() + ", maxSdkVersion=" + signer.getMaxSdkVersion()
-                    + ")";
+            String signerName = getV3SignerName(signer, "signer #");
             for (ApkVerifier.IssueWithParams error : signer.getErrors()) {
                 System.err.println(
                         "ERROR: APK Signature Scheme v3.1 " + signerName + ": " + error);
@@ -744,6 +829,27 @@ public class ApkSignerTool {
                 warningsEncountered = true;
                 warningsOut.println(
                         "WARNING: APK Signature Scheme v3.1 " + signerName + ": " + warning);
+            }
+        }
+        if (result.getV32SchemeSigner() != null) {
+            ApkVerifier.Result.V3SchemeSignerInfo hybridClassicalSigner =
+                    result.getV32SchemeSigner().getClassicalSignerInfo();
+            if (hybridClassicalSigner != null) {
+                String signerName =
+                        getV3SignerName(hybridClassicalSigner, "Hybrid classical signer");
+                for (ApkVerifier.IssueWithParams error : hybridClassicalSigner.getErrors()) {
+                    System.err.println(
+                            "ERROR: APK Signature Scheme v3.2 " + signerName + ": " + error);
+                }
+            }
+            ApkVerifier.Result.V3SchemeSignerInfo hybridPqcSigner =
+                    result.getV32SchemeSigner().getPqcSignerInfo();
+            if (hybridPqcSigner != null) {
+                String signerName = getV3SignerName(hybridPqcSigner, "Hybrid PQC signer");
+                for (ApkVerifier.IssueWithParams error : hybridPqcSigner.getErrors()) {
+                    System.err.println(
+                            "ERROR: APK Signature Scheme v3.2 " + signerName + ": " + error);
+                }
             }
         }
 
@@ -1134,6 +1240,22 @@ public class ApkSignerTool {
         } catch (IOException e) {
             throw new RuntimeException("Failed to read " + page + " resource");
         }
+    }
+
+    /**
+     * Returns a String that can be used to display the provided {@code signer} to the user using
+     * the specified {@code baseName} that includes the minimum and maximum SDK versions being
+     * targeted by the V3 signer.
+     */
+    private static String getV3SignerName(
+            ApkVerifier.Result.V3SchemeSignerInfo signer, String baseName) {
+        return baseName
+                + ": (minSdkVersion="
+                + signer.getMinSdkVersion()
+                + (signer.getSignerTargetsDevRelease() ? " (dev release=true)" : "")
+                + ", maxSdkVersion="
+                + signer.getMaxSdkVersion()
+                + ")";
     }
 
     /**
