@@ -26,6 +26,7 @@ import static com.android.apksig.Constants.VERSION_APK_SIGNATURE_SCHEME_V31;
 import static com.android.apksig.internal.util.Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.THIRD_RSA_2048_SIGNER_RESOURCE_NAME;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
@@ -1872,12 +1873,182 @@ public class ApkVerifierTest {
             ApkVerifier.Result result = verify("v32-rsa-2048_2-mldsa-tgt-36-v3-rsa-2048.apk");
 
             assertVerified(result);
-            assertResultContainsV32Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+            assertResultContainsV32Signers(
+                    result,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
                     ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
             assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
         } finally {
             Security.removeProvider(conscryptProvider.getName());
         }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verify32_v3OriginalV31RotatedV32Hybrid_verifies() throws Exception {
+        // When an APK's signing key is rotated, the rotated key is typically used to sign the v3.1
+        // block with the original key used to sign the v3.0 block. When transitioning to PQC
+        // signing with the v3.2 hybrid block, the rotated key will attest to both hybrid signing
+        // keys in the corresponding hybrid signing configs. This test verifies an APK signed with
+        // a v3.0, v3.1, and v3.2 block successfully verifies.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-rsa-2048_3-mldsa-v31-rsa-2048_2-v3-rsa-2048.apk");
+
+            assertVerified(result);
+            assertResultContainsV32Signers(
+                    result,
+                    THIRD_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertResultContainsSigners(
+                    result,
+                    FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridBlockOnlyOneSigner_fails() throws Exception {
+        // The hybrid block requires two signers targeting a platform release; this test verifies
+        // if the hybrid block only has a single signer, an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-mldsa-only-hybrid-sig-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_MISSING_DUAL_SIGNERS);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridBlockTwoClassicalSigners_fails() throws Exception {
+        // The hybrid block requires one classical and one PQC signer targeting a platform release;
+        // this test verifies if a hybrid block contains two classical signers, an error is
+        // reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-two-classical-sigs-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_INCORRECT_ALGORITHM_PAIR);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridBlockTwoPqcSigners_fails() throws Exception {
+        // The hybrid block requires one classical and one PQC signer targeting a platform release;
+        // this test verifies if a hybrid block contains two PQC signers, an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-two-pqc-sigs-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_INCORRECT_ALGORITHM_PAIR);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridSignersTargetDifferentSdkRanges_fails() throws Exception {
+        // The hybrid block requires each signer to target the same SDK range; this test verifies if
+        // the signers target different SDK ranges, an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-diff-target-sdk-range-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_SIG_INCONSISTENT_SDK_TARGETING);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridSignersDifferentNumberOfSignersInLineage_fails() throws Exception {
+        // The hybrid block requires each signer to have the same signing history; this test
+        // verifies if the number of signers in the lineage between the two signers is different,
+        // an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-diff-num-sigs-in-lineage-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_SIG_LINEAGE_MISMATCH_NUMBER_OF_CERTS);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridSignersDifferentSignersInLineage_fails() throws Exception {
+        // The hybrid block requires each signer to have the same signing history; this test
+        // verifies if lineage size is the same but the signers in the lineage are different between
+        // the two hybrid signers, an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-diff-sigs-in-lineage-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_SIG_LINEAGE_MISMATCH_IN_HISTORY);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_hybridSignersDifferentCapabilitiesInLineage_fails() throws Exception {
+        // The hybrid block requires each signer to have the same signing history and capabilities
+        // assigned to each of the previous signers. This test verifies if the lineage has all the
+        // same previous signers but different capabilities granted to them, an error is reported.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result = verify("v32-diff-caps-in-lineage-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_SIG_LINEAGE_MISMATCH_IN_CAPABILITIES);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    public void verifyV32_V3OriginalV32HybridBlockStripped_fails() throws Exception {
+        // The v3 and v3.1 blocks have an additional attribute that notes the minSdkVersion that the
+        // v3.2 block is targeting; if the v3.2 block is stripped, then the platform should detect
+        // this from the additional attribute and block the install. This test verifies that a
+        // stripped v3.2 block is reported when the additional attribute is present in the v3.0
+        // block.
+        ApkVerifier.Result result = verify("v32-sig-stripped-v3-rsa-2048.apk");
+
+        assertVerificationFailure(result, Issue.V32_BLOCK_MISSING);
+    }
+
+    @Test
+    public void verifyV32_V3OriginalV31RotatedV32HybridBlockStripped_fails() throws Exception {
+        // The v3 and v3.1 blocks have an additional attribute that notes the minSdkVersion that the
+        // v3.2 block is targeting; if the v3.2 block is stripped, then the platform should detect
+        // this from the additional attribute and block the install. This test verifies that a
+        // stripped v3.2 block is reported when the additional attribute is present in the v3.1
+        // block.
+        ApkVerifier.Result result = verify("v32-sig-stripped-v31-rsa-2048_2-v3-rsa-2048.apk");
+
+        assertVerificationFailure(result, Issue.V32_BLOCK_MISSING);
     }
 
     @Test
