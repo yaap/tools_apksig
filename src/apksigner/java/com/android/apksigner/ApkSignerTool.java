@@ -725,12 +725,12 @@ public class ApkSignerTool {
                             result.getV32SchemeSigner().getPqcSignerInfo();
                     printCertificate(
                             classicalSigner.getCertificate(),
-                            getV3SignerName(classicalSigner, "Hybrid classical signer"),
+                            getV3SignerName(classicalSigner, "V3.2 Hybrid Classical Signer"),
                             verbose,
                             printCertsPem);
                     printCertificate(
                             pqcSigner.getCertificate(),
-                            getV3SignerName(pqcSigner, "Hybrid PQC signer"),
+                            getV3SignerName(pqcSigner, "V3.2 Hybrid PQC Signer"),
                             verbose,
                             printCertsPem);
                 }
@@ -755,16 +755,35 @@ public class ApkSignerTool {
                                 printCertsPem);
                     }
                 } else {
-                    int signerNumber = 0;
-                    for (X509Certificate signerCert : signerCerts) {
-                        signerNumber++;
-                        printCertificate(signerCert, "Signer #" + signerNumber, verbose,
+                    String signerPrefix = "";
+                    if (result.isVerifiedUsingV3Scheme()) {
+                        signerPrefix = "V3.0 ";
+                    } else if (result.isVerifiedUsingV2Scheme()) {
+                        signerPrefix = "V2 ";
+                    } else if (result.isVerifiedUsingV1Scheme()) {
+                        signerPrefix = "V1 ";
+                    }
+                    if (signerCerts.size() == 1) {
+                        printCertificate(
+                                signerCerts.get(0),
+                                signerPrefix + "Signer:",
+                                verbose,
                                 printCertsPem);
+                    } else {
+                        int signerNumber = 0;
+                        for (X509Certificate signerCert : signerCerts) {
+                            signerNumber++;
+                            String signerName = signerPrefix + "Signer #" + signerNumber + ":";
+                            printCertificate(signerCert, signerName, verbose, printCertsPem);
+                        }
                     }
                 }
                 if (sourceStampInfo != null) {
-                    printCertificate(sourceStampInfo.getCertificate(), "Source Stamp Signer",
-                            verbose, printCertsPem);
+                    printCertificate(
+                            sourceStampInfo.getCertificate(),
+                            "Source Stamp Signer:",
+                            verbose,
+                            printCertsPem);
                 }
             }
             if (sourceStampInfo != null && verbose) {
