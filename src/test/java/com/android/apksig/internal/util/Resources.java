@@ -101,6 +101,9 @@ public final class Resources {
     public static final String LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME =
             "rsa-mldsa-lineage-2-signers";
 
+    public static final String LINEAGE_RSA_RSA_ML_DSA_RSA_3_SIGNERS_RESOURCE_NAME =
+            "rsa-rsa-mldsa-rsa-lineage-4-signers";
+
     /**
      * Returns a new {@link ApkSigner.SignerConfig} with the certificate and private key in the
      * resources with the file prefix {@code keyNameInResources}.

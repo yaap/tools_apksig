@@ -2052,6 +2052,107 @@ public class ApkVerifierTest {
     }
 
     @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_v32MismatchMaxSdkTargetInHybridBlock_fails() throws Exception {
+        // The v3.2 block must have both signers targeting the same SDK range; if the max SDK
+        // version is different between the signers, verification should fail.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-min-max-tgt-above-platform-max-mismatch-v3-rsa-2048.apk");
+
+            assertVerificationFailure(result, Issue.V32_SIG_INCONSISTENT_SDK_TARGETING);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_v32MismatchMaxSdkAttributeInV31Block_fails() throws Exception {
+        // The v3.2 block is intended as a transition to single signer PQC signing, so it is
+        // expected that the block will only target a subset of SDK releases, then a new single
+        // signer config will target all later releases. The max SDK version targeted by both
+        // signers in the hybrid block is also written as an additional attribute to the v3.0 and
+        // v3.1 blocks to ensure it is not modified; this test verifies modification of this
+        // value is detected and reported by the verifier.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-min-max-tgt-above-platform-v31-v3-max-attr-mismatch.apk");
+
+            assertVerificationFailure(result, Issue.V32_HYBRID_MAX_SDK_MISMATCH);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_v32MismatchMinSdkAttributeInV31Block_fails() throws Exception {
+        // The v3.0 / v3.1 blocks should have a stripping / tamper protection attributes with the
+        // minimum and maximum SDK versions being targeted by the v3.2 block. If the minimum SDK
+        // version in the attribute does not match the actual minimum SDK version targeted by the
+        // v3.2 block, then the verifier should report that the install will fail.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-min-max-tgt-above-platform-v31-v3-min-attr-mismatch.apk");
+
+            assertVerificationFailure(result, Issue.V32_HYBRID_MIN_SDK_MISMATCH);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_v32MissingMinSdkAttributeInV31BlockMaxAttrPresent_fails()
+            throws Exception {
+        // Some APKs may not have the max SDK version attribute in the v3.0 / v3.1 blocks; in these
+        // cases, it is assumed the v3.2 block is targeting all later platform releases. However, if
+        // the maximum SDK version attribute is present without the minimum SDK version attribute,
+        // then the verifier should report the failure since the platform cannot infer the expected
+        // minimum SDK version targeted by the v3.2 block.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-min-max-tgt-above-platform-v31-v3-min-attr-missing.apk");
+
+            assertVerificationFailure(result, Issue.V32_HYBRID_MAX_WITHOUT_MIN_SDK_ATTR);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void verifyV32_v32MinMaxSdkAttributeInV31BlockValid_succeeds() throws Exception {
+        // When an APK is signed with the v3.2 block and the minimum and maximum SDK versions
+        // targeted by the hybrid signers are properly reflected in the corresponding attributes in
+        // the v3.0 / v3.1 signers, the install should succeed.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkVerifier.Result result =
+                    verify("v32-mldsa-rsa-2048_2-v3-rsa-2048-min-max-strip-attr-valid.apk");
+
+            assertVerified(result);
+            assertResultContainsV32Signers(
+                    result,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
     public void verify41_v41DigestMismatchedWithV31_reportsError() throws Exception {
         // This test verifies a digest mismatch between the v4.1 signature and the v3.1 signature
         // is properly reported during v4 signature verification.

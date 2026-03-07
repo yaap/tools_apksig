@@ -27,7 +27,6 @@ import static com.android.apksig.SigningCertificateLineageTest.assertLineageCont
 import static com.android.apksig.SigningCertificateLineageTest.assertLineageContainsExpectedSignersWithCapabilities;
 import static com.android.apksig.apk.ApkUtils.SOURCE_STAMP_CERTIFICATE_HASH_ZIP_ENTRY_NAME;
 import static com.android.apksig.apk.ApkUtils.findZipSections;
-import static com.android.apksig.internal.util.Resources.getDefaultSignerConfigFromResources;
 import static com.android.apksig.internal.util.Resources.EC_P256_2_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.EC_P256_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.FIRST_AND_SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
@@ -41,6 +40,7 @@ import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGN
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_3_SIGNERS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_2048_TO_RSA_4096_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.LINEAGE_RSA_RSA_ML_DSA_RSA_3_SIGNERS_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.ML_DSA_87_CONSCRYPT_SIGNER_RESOURCE_NAME;
 import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_RESOURCE_NAME;
@@ -48,6 +48,7 @@ import static com.android.apksig.internal.util.Resources.SECOND_RSA_2048_SIGNER_
 import static com.android.apksig.internal.util.Resources.TEST_GCP_KEY_RING;
 // END-AOSP
 import static com.android.apksig.internal.util.Resources.THIRD_RSA_2048_SIGNER_RESOURCE_NAME;
+import static com.android.apksig.internal.util.Resources.getDefaultSignerConfigFromResources;
 import static com.android.apksig.internal.util.Resources.getDeterministicDsaSignerConfigFromResources;
 
 import static org.junit.Assert.assertArrayEquals;
@@ -106,7 +107,6 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.PrivateKey;
 import java.security.Provider;
 import java.security.Security;
 import java.security.Signature;
@@ -114,11 +114,8 @@ import java.security.SignatureException;
 import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
@@ -3728,6 +3725,84 @@ public class ApkSignerTest {
             assertResultContainsV32Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
                     ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
             assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+        } finally {
+            Security.removeProvider(conscryptProvider.getName());
+        }
+    }
+
+    @Test
+    @Ignore("b/462818872: Restore when BC provider in tree supports ML-DSA")
+    public void testV32_originalHybridAndRotatedBlocks_signed() throws Exception {
+        // The hybrid block is intended to allow a developer to transition to a single PQC signing
+        // config; to do this, the hybrid block will target a range of platform releases, then the
+        // single signer will target all subsequent releases. This test verifies that an APK can
+        // be signed with an original signing key, a hybrid block, and a rotated key intended to
+        // be used after the platform releases targeted by the hybrid block. Since the platform
+        // just introduced support for the hybrid signature scheme at the time of this writing,
+        // this test will use SDK version numbers instead of Android release letters. Also, since
+        // the platform does not yet support a single PQC signing config, this test uses a new
+        // classical key as the single signer config after the hybrid block.
+        Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
+        Security.addProvider(conscryptProvider);
+        try {
+            ApkSigner.SignerConfig originalSigner =
+                    getDefaultSignerConfigFromResources(FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
+            SigningCertificateLineage hybridClassicalLineage =
+                    Resources.toSigningCertificateLineage(
+                            ApkSignerTest.class, LINEAGE_RSA_2048_2_SIGNERS_RESOURCE_NAME);
+            ApkSigner.SignerConfig hybridClassicalSigner =
+                    getDefaultSignerConfigFromResources(
+                            SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                            false,
+                            V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT,
+                            hybridClassicalLineage);
+            SigningCertificateLineage hybridPqcLineage =
+                    Resources.toSigningCertificateLineage(
+                            ApkSignerTest.class, LINEAGE_RSA_ML_DSA_2_SIGNERS_RESOURCE_NAME);
+            ApkSigner.SignerConfig hybridPqcSigner =
+                    getDefaultSignerConfigFromResources(
+                            ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME,
+                            false,
+                            V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT,
+                            hybridPqcLineage);
+            ApkSigner.HybridSignerConfig hybridSignerConfig =
+                    new ApkSigner.HybridSignerConfig.Builder()
+                            .setClassicalSignerConfig(hybridClassicalSigner)
+                            .setPqcSignerConfig(hybridPqcSigner)
+                            .setMaxSdkVersion(38)
+                            .build();
+            SigningCertificateLineage rotatedClassicalLineage =
+                    Resources.toSigningCertificateLineage(
+                            ApkSignerTest.class,
+                            LINEAGE_RSA_RSA_ML_DSA_RSA_3_SIGNERS_RESOURCE_NAME);
+            ApkSigner.SignerConfig rotatedClassicalSigner =
+                    getDefaultSignerConfigFromResources(
+                            THIRD_RSA_2048_SIGNER_RESOURCE_NAME,
+                            false,
+                            39,
+                            rotatedClassicalLineage);
+
+            File signedApk =
+                    sign(
+                            "original.apk",
+                            new ApkSigner.Builder(List.of(originalSigner, rotatedClassicalSigner))
+                                    .setV1SigningEnabled(true)
+                                    .setV2SigningEnabled(true)
+                                    .setV3SigningEnabled(true)
+                                    .setV4SigningEnabled(false)
+                                    .setHybridSignerConfig(hybridSignerConfig));
+            ApkVerifier.Result result = verify(signedApk, null);
+
+            assertVerified(result);
+            assertResultContainsV32Signers(
+                    result,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+                    ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
+            assertResultContainsSigners(
+                    result,
+                    true,
+                    FIRST_RSA_2048_SIGNER_RESOURCE_NAME,
+                    THIRD_RSA_2048_SIGNER_RESOURCE_NAME);
         } finally {
             Security.removeProvider(conscryptProvider.getName());
         }

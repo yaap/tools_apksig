@@ -79,7 +79,9 @@ public class V3SchemeVerifier {
     private final int mBlockId;
     private final OptionalInt mOptionalRotationMinSdkVersion;
     private final OptionalInt mOptionalHybridMinSdkVersion;
+    private final OptionalInt mOptionalHybridMaxSdkVersion;
     private final boolean mFullVerification;
+    private final boolean mVerifyContinuousSdkTargeting;
 
     private ByteBuffer mApkSignatureSchemeV3Block;
 
@@ -94,6 +96,7 @@ public class V3SchemeVerifier {
             int blockId,
             OptionalInt optionalRotationMinSdkVersion,
             OptionalInt optionalHybridMinSdkVersion,
+            OptionalInt optionalHybridMaxSdkVersion,
             boolean fullVerification) {
         mExecutor = executor;
         mApk = apk;
@@ -105,7 +108,15 @@ public class V3SchemeVerifier {
         mBlockId = blockId;
         mOptionalRotationMinSdkVersion = optionalRotationMinSdkVersion;
         mOptionalHybridMinSdkVersion = optionalHybridMinSdkVersion;
+        mOptionalHybridMaxSdkVersion = optionalHybridMaxSdkVersion;
         mFullVerification = fullVerification;
+        switch (blockId) {
+            case V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID:
+                mVerifyContinuousSdkTargeting = false;
+                break;
+            default:
+                mVerifyContinuousSdkTargeting = true;
+        }
     }
 
     /**
@@ -183,61 +194,67 @@ public class V3SchemeVerifier {
         // make sure that the v3 signers cover the entire targeted sdk version ranges and that the
         // longest SigningCertificateHistory, if present, corresponds to the newest platform
         // versions
-        SortedMap<Integer, ApkSigningBlockUtils.Result.SignerInfo> sortedSigners = new TreeMap<>();
-        for (ApkSigningBlockUtils.Result.SignerInfo signer : mResult.signers) {
-            sortedSigners.put(signer.maxSdkVersion, signer);
-        }
+        if (mVerifyContinuousSdkTargeting) {
+            SortedMap<Integer, ApkSigningBlockUtils.Result.SignerInfo> sortedSigners =
+                    new TreeMap<>();
+            for (ApkSigningBlockUtils.Result.SignerInfo signer : mResult.signers) {
+                sortedSigners.put(signer.maxSdkVersion, signer);
+            }
 
-        // first make sure there is neither overlap nor holes
-        int firstMin = 0;
-        int lastMax = 0;
-        int lastLineageSize = 0;
+            // first make sure there is neither overlap nor holes
+            int firstMin = 0;
+            int lastMax = 0;
+            int lastLineageSize = 0;
 
-        // while we're iterating through the signers, build up the list of lineages
-        List<SigningCertificateLineage> lineages = new ArrayList<>(mResult.signers.size());
+            // while we're iterating through the signers, build up the list of lineages
+            List<SigningCertificateLineage> lineages = new ArrayList<>(mResult.signers.size());
 
-        for (ApkSigningBlockUtils.Result.SignerInfo signer : sortedSigners.values()) {
-            int currentMin = signer.minSdkVersion;
-            int currentMax = signer.maxSdkVersion;
-            if (firstMin == 0) {
-                // first round sets up our basis
-                firstMin = currentMin;
-            } else {
-                // A signer's minimum SDK can equal the previous signer's maximum SDK if this signer
-                // is targeting a development release.
-                if (currentMin != (lastMax + 1)
-                        && !(currentMin == lastMax && signerTargetsDevRelease(signer))) {
-                    mResult.addError(Issue.V3_INCONSISTENT_SDK_VERSIONS);
-                    break;
+            for (ApkSigningBlockUtils.Result.SignerInfo signer : sortedSigners.values()) {
+                int currentMin = signer.minSdkVersion;
+                int currentMax = signer.maxSdkVersion;
+                if (firstMin == 0) {
+                    // first round sets up our basis
+                    firstMin = currentMin;
+                } else {
+                    // A signer's minimum SDK can equal the previous signer's maximum SDK if this
+                    // signer
+                    // is targeting a development release.
+                    if (currentMin != (lastMax + 1)
+                            && !(currentMin == lastMax && signerTargetsDevRelease(signer))) {
+                        mResult.addError(Issue.V3_INCONSISTENT_SDK_VERSIONS);
+                        break;
+                    }
+                }
+                lastMax = currentMax;
+
+                // also, while we're here, make sure that the lineage sizes only increase
+                if (signer.signingCertificateLineage != null) {
+                    int currLineageSize = signer.signingCertificateLineage.size();
+                    if (currLineageSize < lastLineageSize) {
+                        mResult.addError(Issue.V3_INCONSISTENT_LINEAGES);
+                        break;
+                    }
+                    lastLineageSize = currLineageSize;
+                    lineages.add(signer.signingCertificateLineage);
                 }
             }
-            lastMax = currentMax;
 
-            // also, while we're here, make sure that the lineage sizes only increase
-            if (signer.signingCertificateLineage != null) {
-                int currLineageSize = signer.signingCertificateLineage.size();
-                if (currLineageSize < lastLineageSize) {
-                    mResult.addError(Issue.V3_INCONSISTENT_LINEAGES);
-                    break;
-                }
-                lastLineageSize = currLineageSize;
-                lineages.add(signer.signingCertificateLineage);
+            // make sure we support our desired sdk ranges; if rotation is present in a v3.1 block
+            // then the max level only needs to support up to that sdk version for rotation.
+            if (firstMin > mMinSdkVersion
+                    || lastMax
+                            < (mOptionalRotationMinSdkVersion.isPresent()
+                                    ? mOptionalRotationMinSdkVersion.getAsInt() - 1
+                                    : mMaxSdkVersion)) {
+                mResult.addError(Issue.V3_MISSING_SDK_VERSIONS, firstMin, lastMax);
             }
-        }
 
-        // make sure we support our desired sdk ranges; if rotation is present in a v3.1 block
-        // then the max level only needs to support up to that sdk version for rotation.
-        if (firstMin > mMinSdkVersion
-                || lastMax < (mOptionalRotationMinSdkVersion.isPresent()
-                    ? mOptionalRotationMinSdkVersion.getAsInt() - 1 : mMaxSdkVersion)) {
-            mResult.addError(Issue.V3_MISSING_SDK_VERSIONS, firstMin, lastMax);
-        }
-
-        try {
-            mResult.signingCertificateLineage =
-                    SigningCertificateLineage.consolidateLineages(lineages);
-        } catch (IllegalArgumentException e) {
-            mResult.addError(Issue.V3_INCONSISTENT_LINEAGES);
+            try {
+                mResult.signingCertificateLineage =
+                        SigningCertificateLineage.consolidateLineages(lineages);
+            } catch (IllegalArgumentException e) {
+                mResult.addError(Issue.V3_INCONSISTENT_LINEAGES);
+            }
         }
         if (!mResult.containsErrors()) {
             mResult.verified = true;
@@ -546,7 +563,6 @@ public class V3SchemeVerifier {
         // Parse the additional attributes block.
         int additionalAttributeCount = 0;
         boolean rotationAttrFound = false;
-        boolean hybridAttrFound = false;
         String schemeVersion = null;
         switch (mBlockId) {
             case V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID:
@@ -561,6 +577,8 @@ public class V3SchemeVerifier {
             default:
                 schemeVersion = "UNKNOWN";
         }
+        OptionalInt optionalAttrHybridMinSdkVersion = OptionalInt.empty();
+        OptionalInt optionalAttrHybridMaxSdkVersion = OptionalInt.empty();
         while (additionalAttributes.hasRemaining()) {
             additionalAttributeCount++;
             try {
@@ -607,29 +625,13 @@ public class V3SchemeVerifier {
                         }
                     }
                 } else if (id == V3SchemeConstants.HYBRID_MIN_SDK_VERSION_ATTR_ID) {
-                    hybridAttrFound = true;
                     int attrHybridMinSdkVersion =
                             ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN).getInt();
-                    // The hybrid block was added with the v3.2 signature scheme; if the
-                    // maxSdkVersion does not support v3.2 then ignore this attribute.
-                    if (mMaxSdkVersion >= V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT
-                            && mFullVerification) {
-                        if (mOptionalHybridMinSdkVersion.isPresent()) {
-                            int hybridMinSdkVersion = mOptionalHybridMinSdkVersion.getAsInt();
-                            if (attrHybridMinSdkVersion != hybridMinSdkVersion) {
-                                result.addError(
-                                        Issue.V32_HYBRID_MIN_SDK_MISMATCH,
-                                        schemeVersion,
-                                        attrHybridMinSdkVersion,
-                                        hybridMinSdkVersion);
-                            }
-                        } else {
-                            result.addError(
-                                    Issue.V32_BLOCK_MISSING,
-                                    schemeVersion,
-                                    attrHybridMinSdkVersion);
-                        }
-                    }
+                    optionalAttrHybridMinSdkVersion = OptionalInt.of(attrHybridMinSdkVersion);
+                } else if (id == V3SchemeConstants.HYBRID_MAX_SDK_VERSION_ATTR_ID) {
+                    int attrHybridMaxSdkVersion =
+                            ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                    optionalAttrHybridMaxSdkVersion = OptionalInt.of(attrHybridMaxSdkVersion);
                 } else if (id == V3SchemeConstants.SIGNER_TARGETS_DEV_RELEASE_ATTR_ID) {
                     // This attribute should not be used on a v3.0 signer, but it can be used on
                     // either a v3.1 or v3.2 signer if they target a development release.
@@ -645,14 +647,65 @@ public class V3SchemeVerifier {
                 return;
             }
         }
+        if (optionalAttrHybridMinSdkVersion.isPresent()
+                || optionalAttrHybridMaxSdkVersion.isPresent()) {
+            if (!optionalAttrHybridMinSdkVersion.isPresent()) {
+                result.addError(
+                        Issue.V32_HYBRID_MAX_WITHOUT_MIN_SDK_ATTR,
+                        optionalAttrHybridMaxSdkVersion.getAsInt(),
+                        schemeVersion);
+                return;
+            }
+            int attrHybridMinSdkVersion = optionalAttrHybridMinSdkVersion.getAsInt();
+            if (!mOptionalHybridMinSdkVersion.isPresent()) {
+                result.addError(Issue.V32_BLOCK_MISSING, schemeVersion, attrHybridMinSdkVersion);
+                return;
+            }
+            int hybridMinSdkVersion = mOptionalHybridMinSdkVersion.getAsInt();
+            if (attrHybridMinSdkVersion != hybridMinSdkVersion) {
+                result.addError(
+                        Issue.V32_HYBRID_MIN_SDK_MISMATCH,
+                        schemeVersion,
+                        attrHybridMinSdkVersion,
+                        hybridMinSdkVersion);
+                return;
+            }
+            if (optionalAttrHybridMaxSdkVersion.isPresent()) {
+                int attrHybridMaxSdkVersion = optionalAttrHybridMaxSdkVersion.getAsInt();
+                int hybridMaxSdkVersion = mOptionalHybridMaxSdkVersion.orElse(Integer.MAX_VALUE);
+                if (attrHybridMaxSdkVersion != hybridMaxSdkVersion) {
+                    result.addError(
+                            Issue.V32_HYBRID_MAX_SDK_MISMATCH,
+                            schemeVersion,
+                            attrHybridMaxSdkVersion,
+                            hybridMaxSdkVersion);
+                    return;
+                }
+            }
+        }
         if (mFullVerification && mOptionalRotationMinSdkVersion.isPresent() && !rotationAttrFound) {
             result.addWarning(Issue.V31_ROTATION_MIN_SDK_ATTR_MISSING,
                     mOptionalRotationMinSdkVersion.getAsInt());
         }
-        if (mFullVerification && mOptionalHybridMinSdkVersion.isPresent() && !hybridAttrFound) {
+        if (mFullVerification
+                && mOptionalHybridMinSdkVersion.isPresent()
+                && !optionalAttrHybridMinSdkVersion.isPresent()) {
             result.addWarning(
                     Issue.V32_HYBRID_MIN_SDK_ATTR_MISSING,
                     mOptionalHybridMinSdkVersion.getAsInt(),
+                    schemeVersion);
+        }
+        // The hybrid maximum stripping protection attribute is not required if the hybrid block is
+        // targeting all platform SDK versions after the minimum version; this is typically seen
+        // when a package is transitioning to hybrid signing until the package transitions back to
+        // a single signer.
+        if (mFullVerification
+                && mOptionalHybridMaxSdkVersion.isPresent()
+                && mOptionalHybridMaxSdkVersion.getAsInt() != Integer.MAX_VALUE
+                && !optionalAttrHybridMaxSdkVersion.isPresent()) {
+            result.addWarning(
+                    Issue.V32_HYBRID_MAX_SDK_ATTR_MISSING,
+                    mOptionalHybridMaxSdkVersion.getAsInt(),
                     schemeVersion);
         }
     }
@@ -687,6 +740,7 @@ public class V3SchemeVerifier {
         private boolean mFullVerification = true;
         private OptionalInt mOptionalRotationMinSdkVersion = OptionalInt.empty();
         private OptionalInt mOptionalHybridMinSdkVersion = OptionalInt.empty();
+        private OptionalInt mOptionalHybridMaxSdkVersion = OptionalInt.empty();
 
         /**
          * Instantiates a new {@code Builder} for a {@code V3SchemeVerifier} that can be used to
@@ -757,6 +811,24 @@ public class V3SchemeVerifier {
          */
         public Builder setHybridMinSdkVersion(int hybridMinSdkVersion) {
             mOptionalHybridMinSdkVersion = OptionalInt.of(hybridMinSdkVersion);
+            return this;
+        }
+
+        /**
+         * Sets the {@code hybridMaxSdkVersion} to be verified in the v3.0 / v3.1 signer's
+         * additional attributes.
+         *
+         * <p>This value can be obtained from the signers returned when verifying the v3.2 signature
+         * block of an APK; since the hybrid block only supports two signers and both signers must
+         * target the same SDK range, the maximum SDK version for either of the hybrid signers can
+         * be used.
+         *
+         * <p>Note, a maximum SDK version should never be set without a minimum SDK version; if only
+         * the maximum SDK version is set, then an `IllegalStateException` will be thrown when
+         * attempting to build this verifier.
+         */
+        public Builder setHybridMaxSdkVersion(int hybridMaxSdkVersion) {
+            mOptionalHybridMaxSdkVersion = OptionalInt.of(hybridMaxSdkVersion);
             return this;
         }
 
@@ -835,6 +907,12 @@ public class V3SchemeVerifier {
             if (mContentDigestsToVerify == null) {
                 mContentDigestsToVerify = new HashSet<>(1);
             }
+            if (mOptionalHybridMaxSdkVersion.isPresent()
+                    && !mOptionalHybridMinSdkVersion.isPresent()) {
+                throw new IllegalStateException(
+                        "The V3.2 hybrid block maximum SDK version cannot be set without the "
+                                + "minimum SDK version");
+            }
 
             V3SchemeVerifier verifier =
                     new V3SchemeVerifier(
@@ -848,6 +926,7 @@ public class V3SchemeVerifier {
                             mBlockId,
                             mOptionalRotationMinSdkVersion,
                             mOptionalHybridMinSdkVersion,
+                            mOptionalHybridMaxSdkVersion,
                             mFullVerification);
             if (mApkSignatureSchemeV3Block != null) {
                 verifier.mApkSignatureSchemeV3Block = mApkSignatureSchemeV3Block;
