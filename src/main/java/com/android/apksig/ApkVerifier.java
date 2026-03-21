@@ -219,6 +219,7 @@ public class ApkVerifier {
         if (maxSdkVersion >= AndroidSdkVersion.N) {
             RunnablesExecutor executor = RunnablesExecutor.SINGLE_THREADED;
             int v32HybridMinSdkVersion = 0;
+            int v32HybridMaxSdkVersion = 0;
             if (maxSdkVersion >= MIN_SDK_WITH_V32_SUPPORT) {
                 try {
                     ApkSigningBlockUtils.Result v32Result =
@@ -239,6 +240,7 @@ public class ApkVerifier {
                     Result.V32SchemeSignerInfo v32Signers = result.getV32SchemeSigner();
                     if (v32Signers != null) {
                         v32HybridMinSdkVersion = v32Signers.getPqcSignerInfo().getMinSdkVersion();
+                        v32HybridMaxSdkVersion = v32Signers.getPqcSignerInfo().getMaxSdkVersion();
                     }
                 } catch (ApkSigningBlockUtils.SignatureNotFoundException ignored) {
                     // v3.2 signature not required
@@ -264,6 +266,9 @@ public class ApkVerifier {
                                             V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID);
                     if (v32HybridMinSdkVersion > 0) {
                         builder.setHybridMinSdkVersion(v32HybridMinSdkVersion);
+                    }
+                    if (v32HybridMaxSdkVersion > 0) {
+                        builder.setHybridMaxSdkVersion(v32HybridMaxSdkVersion);
                     }
                     ApkSigningBlockUtils.Result v31Result = builder.build().verify();
                     foundApkSigSchemeIds.add(VERSION_APK_SIGNATURE_SCHEME_V31);
@@ -295,6 +300,9 @@ public class ApkVerifier {
                             .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID);
                     if (v32HybridMinSdkVersion > 0) {
                         builder.setHybridMinSdkVersion(v32HybridMinSdkVersion);
+                    }
+                    if (v32HybridMaxSdkVersion > 0) {
+                        builder.setHybridMaxSdkVersion(v32HybridMaxSdkVersion);
                     }
                     if (v31RotationMinSdkVersion > 0) {
                         builder.setRotationMinSdkVersion(v31RotationMinSdkVersion);
@@ -3390,6 +3398,20 @@ public class ApkVerifier {
                         + " version %2$d, but the v3.2 block targets SDK version %3$d"),
 
         /**
+         * The v3 / v3.1 stripping protection attribute for the hybrid block does not match the
+         * maximum SDK version being targeted by the v3.2 signer block in the APK.
+         *
+         * <ul>
+         * <li>Parameter 1: Version of signing block with mismatched attribute ({@code String})
+         * <li>Parameter 2: max SDK version supporting hybrid from attribute ({@code int})
+         * <li>Parameter 3: max SDK version supporting hybrid from v3.2 block ({@code int})
+         * </ul>
+         */
+        V32_HYBRID_MAX_SDK_MISMATCH(
+                "The v%1$s signer indicates a hybrid signer should be supported through SDK"
+                        + " version %2$d, but the v3.2 block targets through SDK version %3$d"),
+
+        /**
          * The v3 / v3.1 stripping protection attriute for the hybrid block is present, but a v3.2
          * signing lock was not found.
          *
@@ -3403,8 +3425,8 @@ public class ApkVerifier {
                         + " version %2$d, but a v3.2 block was not found"),
 
         /**
-         * The APK contains a v3.2 block, but the hybrid SDK version stripping protection attribute
-         * was not written to one of the v3 / v3.1 signer's additional attributes.
+         * The APK contains a v3.2 block, but the hybrid minimum SDK version stripping protection
+         * attribute was not written to one of the v3 / v3.1 signer's additional attributes.
          *
          * <ul>
          * <li>Parameter 1: min SDK version supporting hybrid from v3.2 block ({@code int})
@@ -3413,8 +3435,36 @@ public class ApkVerifier {
          */
         V32_HYBRID_MIN_SDK_ATTR_MISSING(
                 "APK supports the v3.2 hybrid block starting from SDK version %1$d, but the v%2$s"
-                        + " signer does not contain the attribute to detect if this signature is "
-                        + "stripped"),
+                        + " signer does not contain the minimum attribute to detect if this"
+                        + " signature is stripped"),
+
+        /**
+         * The APK contains a v3.2 block, but the hybrid maximum SDK version stripping protection
+         * attribute was not written to one of the v3 / v3.1 signer's additional attributes.
+         *
+         * <ul>
+         * <li>Parameter 1: max SDK version supporting hybrid from v3.2 block ({@code int})
+         * <li>Parameter 2: Version of signing block missing hybrid attribute ({@code String})
+         * </ul>
+         */
+        V32_HYBRID_MAX_SDK_ATTR_MISSING(
+                "APK supports the v3.2 hybrid block through SDK version %1$d, but the v%2$s signer"
+                    + " does not contain the maximum SDK version attribute to detect if this"
+                    + " signature is stripped"),
+
+        /**
+         * The V3.0 or V3.1 signature block has a hybrid max SDK version stripping protection
+         * attribute without a corresponding min SDK version attribute.
+         *
+         * <ul>
+         * <li>Parameter 1: max SDK version supporting hybrid from v3.2 block ({@code int})
+         * <li>Parameter 2: Version of signing block missing min hybrid attribute ({@code String})
+         * </ul>
+         */
+        V32_HYBRID_MAX_WITHOUT_MIN_SDK_ATTR(
+                "The attribute containing the max SDK version supported by the hybrid block, "
+                        + "%1$d, was included in the v%2$s signature scheme block without the "
+                        + "corresponding min SDK version attribute"),
 
         /**
          * The APK contains a v3.2 block, but one of the signers failed signature verification. Both

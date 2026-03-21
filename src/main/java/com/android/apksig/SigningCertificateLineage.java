@@ -596,7 +596,6 @@ public class SigningCertificateLineage {
                 DefaultApkSignerEngine.SignerConfig config = signerConfigs.get(j);
                 if (mSigningLineage.get(i).signingCert.equals(config.getCertificates().get(0))) {
                     sortedSignerConfigs.add(config);
-                    break;
                 }
             }
         }

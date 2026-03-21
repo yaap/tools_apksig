@@ -64,6 +64,16 @@ public class V3SchemeConstants {
     public static final int HYBRID_MIN_SDK_VERSION_ATTR_ID = 0xbf940529;
 
     /**
+     * This attribute is intended to be written to the V3.0 / V3.1 signer blocks as an additional
+     * attribute whose value is the maximum SDK version supported by the hybrid signing block. If
+     * this value is set to Y and a v3.2 signing block does not exist, or the maximum SDK version
+     * supported by the hybrid signing block is not Y, then the APK should be rejected. This
+     * attribute is intended to allow a seamless transition to a single signer config once the
+     * hybrid signature is no longer required.
+     */
+    public static final int HYBRID_MAX_SDK_VERSION_ATTR_ID = 0x9f06b79c;
+
+    /**
      * This attribute is written to a signer's block as an additional attribute to signify that the
      * signer is targeting a development release. This is required to support testing new signature
      * scheme versions or algorithms on new development releases as the previous platform release

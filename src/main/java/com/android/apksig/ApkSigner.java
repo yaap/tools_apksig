@@ -1265,11 +1265,13 @@ public class ApkSigner {
         private final SignerConfig mClassicalSignerConfig;
         private final SignerConfig mPqcSignerConfig;
         private final int mMinSdkVersion;
+        private final int mMaxSdkVersion;
 
         private HybridSignerConfig(Builder builder) {
             mClassicalSignerConfig = builder.mClassicalSignerConfig;
             mPqcSignerConfig = builder.mPqcSignerConfig;
             mMinSdkVersion = builder.mMinSdkVersion;
+            mMaxSdkVersion = builder.mMaxSdkVersion;
         }
 
         /** Returns the classical {@link SignerConfig} for this hybrid signer. */
@@ -1287,11 +1289,17 @@ public class ApkSigner {
             return mMinSdkVersion;
         }
 
+        /** Returns the maximum SDK version for which this hybrid signer should be used. */
+        public int getMaxSdkVersion() {
+            return mMaxSdkVersion;
+        }
+
         /** Builder of {@link HybridSignerConfig} instances. */
         public static class Builder {
             private SignerConfig mClassicalSignerConfig;
             private SignerConfig mPqcSignerConfig;
             private int mMinSdkVersion = 0;
+            private int mMaxSdkVersion = Integer.MAX_VALUE;
 
             /** Sets the classical signer config to the provided {@code classicalSignerConfig}. */
             public Builder setClassicalSignerConfig(SignerConfig classicalSignerConfig) {
@@ -1333,6 +1341,25 @@ public class ApkSigner {
             }
 
             /**
+             * Sets the maximum SDK version on which the hybrid signer config should be verified.
+             *
+             * <p>Note, the maximum SDK version must be at least the value of the SDK version that
+             * first introduced support for the hybrid signature scheme (Android C); if the provided
+             * value is less than this, then an {@link IllegalArgumentException} will be thrown.
+             */
+            public Builder setMaxSdkVersion(int maxSdkVersion) {
+                if (maxSdkVersion < V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT) {
+                    throw new IllegalArgumentException(
+                            "The provided maxSdkVersion, "
+                                    + maxSdkVersion
+                                    + ", is less than the first SDK version with v3.2 support, "
+                                    + V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT);
+                }
+                mMaxSdkVersion = maxSdkVersion;
+                return this;
+            }
+
+            /**
              * Builds a HybridSignerConfig instance using the provided config values.
              *
              * <p>This method will throw an {@code IllegalStateException} if either of the {@link
@@ -1347,6 +1374,13 @@ public class ApkSigner {
                 if (mPqcSignerConfig == null) {
                     throw new IllegalStateException(
                             "A PQC signer config must be provided to build a HybridSignerConfig");
+                }
+                if (mMinSdkVersion > mMaxSdkVersion) {
+                    throw new IllegalStateException(
+                            "The minimum SDK version, "
+                                    + mMinSdkVersion
+                                    + ", must be less than or equal to the maximum SDK version, "
+                                    + mMaxSdkVersion);
                 }
                 return new HybridSignerConfig(this);
             }

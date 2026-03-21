@@ -572,19 +572,19 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                     e);
         }
 
-        // Verify both of the signers are targeting the same SDK range.
-        if (classicalSignerConfig.minSdkVersion != pqcSignerConfig.minSdkVersion
-                || classicalSignerConfig.maxSdkVersion != pqcSignerConfig.maxSdkVersion) {
+        // Verify both of the signers are targeting the same minimum SDK version; the maximum is
+        // not checked since it cannot be specified by the caller.
+        if (classicalSignerConfig.minSdkVersion != pqcSignerConfig.minSdkVersion) {
             throw new IllegalStateException(
                     "When signing with the v3.2 signature scheme, both signers must target the "
                             + "same SDK range; classical: "
                             + classicalSignerConfig.minSdkVersion
                             + "-"
-                            + classicalSignerConfig.maxSdkVersion
+                            + mHybridSignerConfig.getMaxSdkVersion()
                             + ", PQC: "
                             + pqcSignerConfig.minSdkVersion
                             + "-"
-                            + pqcSignerConfig.maxSdkVersion);
+                            + mHybridSignerConfig.getMaxSdkVersion());
         }
         // If the caller specified a later release than the first one supported by the PQC signature
         // algorithm, then use that version as the minimum for hybrid targeting.
@@ -598,10 +598,10 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
         }
         classicalSignerConfig.minSdkVersion = hybridMinSdkVersion;
         classicalSignerConfig.signerTargetsDevRelease = hybridTargetsDevRelease;
-        classicalSignerConfig.maxSdkVersion = Integer.MAX_VALUE;
+        classicalSignerConfig.maxSdkVersion = mHybridSignerConfig.getMaxSdkVersion();
         pqcSignerConfig.minSdkVersion = hybridMinSdkVersion;
         pqcSignerConfig.signerTargetsDevRelease = hybridTargetsDevRelease;
-        pqcSignerConfig.maxSdkVersion = Integer.MAX_VALUE;
+        pqcSignerConfig.maxSdkVersion = mHybridSignerConfig.getMaxSdkVersion();
 
         List<ApkSigningBlockUtils.SignerConfig> hybridSignerConfigs = new ArrayList<>(2);
         hybridSignerConfigs.add(classicalSignerConfig);
@@ -1226,10 +1226,12 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
             List<ApkSigningBlockUtils.SignerConfig> v31SignerConfigs = processV31SignerConfigs(
                     v3SignerConfigs);
             int v32MinSdkVersion = 0;
+            int v32MaxSdkVersion = 0;
             if (mHybridSignerConfig != null) {
                 List<ApkSigningBlockUtils.SignerConfig> hybridSignerConfigs =
                         createHybridSignerConfig(apkSigningBlockPaddingSupported);
                 v32MinSdkVersion = hybridSignerConfigs.get(0).minSdkVersion;
+                v32MaxSdkVersion = hybridSignerConfigs.get(0).maxSdkVersion;
                 v32SigningSchemeBlockAndDigests =
                         new V3SchemeSigner.Builder(
                                         beforeCentralDir,
@@ -1254,6 +1256,9 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 if (v32MinSdkVersion > 0) {
                     v31SignerBuilder.setMinSdkVersionForV32(v32MinSdkVersion);
                 }
+                if (v32MaxSdkVersion > 0) {
+                    v31SignerBuilder.setMaxSdkVersionForV32(v32MaxSdkVersion);
+                }
                 ApkSigningBlockUtils.SigningSchemeBlockAndDigests v31SigningSchemeBlockAndDigests =
                         v31SignerBuilder.build().generateApkSignatureSchemeV3BlockAndDigests();
                 signingSchemeBlocks.add(v31SigningSchemeBlockAndDigests.signingSchemeBlock);
@@ -1264,6 +1269,9 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
                 .setBlockId(V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID);
             if (v32MinSdkVersion > 0) {
                 builder.setMinSdkVersionForV32(v32MinSdkVersion);
+            }
+            if (v32MaxSdkVersion > 0) {
+                builder.setMaxSdkVersionForV32(v32MaxSdkVersion);
             }
             if (v31SignerConfigs != null && !v31SignerConfigs.isEmpty()) {
                 // The V3.1 stripping protection writes the minimum SDK version from the targeted
@@ -2138,163 +2146,194 @@ public class DefaultApkSignerEngine implements ApkSignerEngine {
          * from the provided options
          */
         private void setTargetedSignerConfigs() throws InvalidKeyException {
-            // If the caller specified any SDK targeted signer configs, then the min SDK version
-            // should be set for those configs, all others should have a default 0 min SDK version.
-            mSignerConfigs.sort(((signerConfig1, signerConfig2) -> signerConfig1.getMinSdkVersion()
-                    - signerConfig2.getMinSdkVersion()));
-            // With the signer configs sorted, find the first targeted signer config with a min
-            // SDK version > 0 to create the separate targeted signer configs.
             mTargetedSignerConfigs = new ArrayList<>();
-            for (int i = 0; i < mSignerConfigs.size(); i++) {
-                if (mSignerConfigs.get(i).getMinSdkVersion() > 0) {
-                    mTargetedSignerConfigs = mSignerConfigs.subList(i, mSignerConfigs.size());
-                    mSignerConfigs = mSignerConfigs.subList(0, i);
+            SigningCertificateLineage mergedLineage = mergeSignerLineages(mSignerConfigs);
+
+            // If no lineage was provided, either globally or with any targeted signers, then exit
+            // early as there should only be a single signing identity (this could include multiple
+            // signers for V1 or V2, but only a single signer is supported for V3+).
+            if (mergedLineage == null) {
+                processSignersWithoutLineage();
+                return;
+            }
+
+            mSignerConfigs = getSortedSignerConfigs(mergedLineage);
+
+            createTargetedSignerConfigs(mergedLineage);
+
+            // Once all individual signer lineages are assigned, set the global lineage to the
+            // merged lineage containing all signers to ensure that any lineage interactions during
+            // signing will have all signers represented.
+            mSigningCertificateLineage = mergedLineage;
+        }
+
+        /**
+         * Validates the provided signer(s) when no signing lineage is present, ensuring that
+         * multiple targeted signers are rejected, and migrating a single targeted signer if
+         * applicable.
+         */
+        private void processSignersWithoutLineage() {
+            boolean hasTargetedSigners = false;
+            for (SignerConfig config : mSignerConfigs) {
+                if (config.getMinSdkVersion() > 0) {
+                    hasTargetedSigners = true;
                     break;
                 }
             }
 
-            // A lineage provided outside a targeted signing config is intended for the original
-            // rotation; sort the untargeted signing configs based on this lineage and create a new
-            // targeted signing config for the initial rotation.
-            if (mSigningCertificateLineage != null) {
-                if (!mTargetedSignerConfigs.isEmpty()) {
-                    // Only the initial rotation can use the rotation-min-sdk-version; all
-                    // subsequent targeted rotations must use targeted signing configs.
-                    int firstTargetedSdkVersion = mTargetedSignerConfigs.get(0).getMinSdkVersion();
-                    if (mRotationMinSdkVersion >= firstTargetedSdkVersion) {
-                        throw new IllegalStateException(
-                                "The rotation-min-sdk-version, " + mRotationMinSdkVersion
-                                        + ", must be less than the first targeted SDK version, "
-                                        + firstTargetedSdkVersion);
-                    }
-                }
-                try {
-                    mSignerConfigs = mSigningCertificateLineage.sortSignerConfigs(mSignerConfigs);
-                } catch (IllegalArgumentException e) {
-                    throw new IllegalStateException(
-                            "Provided signer configs do not match the "
-                                    + "provided SigningCertificateLineage",
-                            e);
-                }
-                // When there are multiple rotated signing configs provided, it is possible that
-                // the latest will target a release later than the mRotationMinSdkVersion. All
-                // signers after the original should be updated to use the mRotationMinSdkVersion
-                // if they don't already have a target specified to ensure they can target the
-                // appropriate SDK version in the V3.1 block.
-                // Check if the first signer after sorting is the original signer or should
-                // be used as a targeted config.
-                SigningCertificateLineage subLineage =
-                        mSigningCertificateLineage.getSubLineage(
-                                mSignerConfigs.get(0).getCertificates().get(0));
-                int startIndex = 0;
-                List<SignerConfig> originalSignerConfig = new ArrayList<>();
-                if (subLineage.size() == 1) {
-                    startIndex = 1;
-                    originalSignerConfig.add(mSignerConfigs.get(0));
-                }
-                for (int i = startIndex; i < mSignerConfigs.size(); i++) {
-                    SignerConfig rotatedSignerConfig = mSignerConfigs.get(i);
-                    SignerConfig.Builder rotatedConfigBuilder =
-                            new SignerConfig.Builder(
-                                    rotatedSignerConfig.getName(),
-                                    rotatedSignerConfig.getKeyConfig(),
-                                    rotatedSignerConfig.getCertificates(),
-                                    rotatedSignerConfig.getDeterministicDsaSigning());
-                    int rotationMinSdkVersion =
-                            rotatedSignerConfig.getMinSdkVersion() == 0
-                                    ? mRotationMinSdkVersion
-                                    : rotatedSignerConfig.getMinSdkVersion();
-                    SigningCertificateLineage targetedLineage =
-                            rotatedSignerConfig.getSigningCertificateLineage() != null
-                                    ? rotatedSignerConfig.getSigningCertificateLineage()
-                                    : mSigningCertificateLineage;
-                    rotatedConfigBuilder.setLineageForMinSdkVersion(
-                            targetedLineage, rotationMinSdkVersion);
-                    // If this is the last signer, then use the provided value for targeting a
-                    // development release.
-                    if (i == (mSignerConfigs.size() - 1)) {
-                        rotatedConfigBuilder.setSignerTargetsDevRelease(mRotationTargetsDevRelease);
-                    }
-                    mTargetedSignerConfigs.add(rotatedConfigBuilder.build());
-                }
-                mTargetedSignerConfigs.sort(
-                        (c1, c2) -> Integer.compare(c1.getMinSdkVersion(), c2.getMinSdkVersion()));
-                mSignerConfigs = originalSignerConfig;
+            if (hasTargetedSigners && mSignerConfigs.size() > 1) {
+                throw new IllegalStateException(
+                        "Multiple SDK-targeted signers were provided, but no lineage was found,"
+                                + " targeted rotation requires a valid signing lineage.");
             }
-            mSigningCertificateLineage = mergeTargetedSigningConfigLineages();
+
+            // If only one targeted signer was provided, then move it to the targeted list.
+            if (mSignerConfigs.size() == 1 && hasTargetedSigners) {
+                mTargetedSignerConfigs.add(mSignerConfigs.get(0));
+                mSignerConfigs.clear();
+            }
         }
 
         /**
-         * Merges and returns the lineages from any caller provided SDK targeted {@link
-         * SignerConfig} instances with an optional {@code lineage} specified as part of the general
-         * signing config.
-         *
-         * <p>If multiple signing configs target the same SDK version, or if any of the lineages
-         * cannot be merged, then an {@code IllegalStateException} is thrown.
+         * Sorts and returns the signers by their effective SDK version, then relies on the merged
+         * lineage to sort them. This guarantees that multiple configs sharing the same certificate
+         * are grouped in increasing SDK version order.
          */
-        private SigningCertificateLineage mergeTargetedSigningConfigLineages()
+        private List<SignerConfig> getSortedSignerConfigs(SigningCertificateLineage mergedLineage) {
+            // Sort using the effective SDK version, so that if a target SDK version was not
+            // specified, the rotation minSdkVersion will be used instead.
+            mSignerConfigs.sort(
+                    (config1, config2) -> {
+                        int effectiveMinSdk1 =
+                                config1.getMinSdkVersion() == 0
+                                        ? mRotationMinSdkVersion
+                                        : config1.getMinSdkVersion();
+                        int effectiveMinSdk2 =
+                                config2.getMinSdkVersion() == 0
+                                        ? mRotationMinSdkVersion
+                                        : config2.getMinSdkVersion();
+                        return Integer.compare(effectiveMinSdk1, effectiveMinSdk2);
+                    });
+
+            try {
+                return mergedLineage.sortSignerConfigs(mSignerConfigs);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalStateException(
+                        "Provided signer configs do not match the consolidated lineage", e);
+            }
+        }
+
+        /**
+         * Iterates through the signer configs, enforces SDK targeting constraints, populates the
+         * targeted configs list, and leaves only the original signer in the base list.
+         *
+         * <p>Note, this method expects that the global signer configs will be sorted so that they
+         * can be added to the targeted signer configs list in ascending order by SDK.
+         */
+        private void createTargetedSignerConfigs(SigningCertificateLineage lineage) {
+            // Check if the first signer after sorting is the original signer or should
+            // be used as a targeted config.
+            SigningCertificateLineage subLineage =
+                    lineage.getSubLineage(mSignerConfigs.get(0).getCertificates().get(0));
+            int startIndex = 0;
+            List<SignerConfig> originalSignerConfig = new ArrayList<>();
+            if (subLineage.size() == 1) {
+                startIndex = 1;
+                originalSignerConfig.add(mSignerConfigs.get(0));
+            }
+
+            int previousMinSdkVersion = 0;
+            boolean previousTargetsDevRelease = false;
+            for (int i = startIndex; i < mSignerConfigs.size(); i++) {
+                SignerConfig signerConfig = mSignerConfigs.get(i);
+                int targetedMinSdkVersion =
+                        signerConfig.getMinSdkVersion() == 0
+                                ? mRotationMinSdkVersion
+                                : signerConfig.getMinSdkVersion();
+
+                // TODO(b/489178001): When the new per-signer targets development release option is
+                // available, use that to flag the current signer in addition to this deprecated
+                // option.
+                boolean targetsDevRelease =
+                        i == (mSignerConfigs.size() - 1) && mRotationTargetsDevRelease;
+
+                if (targetedMinSdkVersion < previousMinSdkVersion) {
+                    throw new IllegalStateException(
+                            "Targeted SDK versions must increase alongside the signing lineage. "
+                                    + "Signer "
+                                    + signerConfig.getName()
+                                    + "targets SDK "
+                                    + targetedMinSdkVersion
+                                    + ", but the previous signer targets "
+                                    + previousMinSdkVersion);
+                }
+
+                // If the current and previous signers target the same release, this could either be
+                // due to one signer targeting a development release, or else a build system is
+                // providing all signers without explicit SDK targeting.
+                if (targetedMinSdkVersion == previousMinSdkVersion) {
+                    // If both the current and previous signers have the same value for targeting
+                    // a development release and an explicit SDK version is being targeted, then
+                    // report the failure since a developer should not have multiple explicit
+                    // targeted signers targeting the same SDK version.
+                    if (targetsDevRelease == previousTargetsDevRelease
+                            && signerConfig.getMinSdkVersion() != 0) {
+                        throw new IllegalStateException(
+                                "Multiple SignerConfigs were found targeting SDK version "
+                                        + targetedMinSdkVersion
+                                        + ". The platform does not allow multiple active signers "
+                                        + "for the same SDK version unless the newer signer "
+                                        + "explicitly targets a development release.");
+                    }
+                }
+
+                previousMinSdkVersion = targetedMinSdkVersion;
+                previousTargetsDevRelease = targetsDevRelease;
+
+                SignerConfig.Builder builder =
+                        new SignerConfig.Builder(
+                                signerConfig.getName(),
+                                signerConfig.getKeyConfig(),
+                                signerConfig.getCertificates(),
+                                signerConfig.getDeterministicDsaSigning());
+                SigningCertificateLineage targetedLineage =
+                        signerConfig.getSigningCertificateLineage() != null
+                                ? signerConfig.getSigningCertificateLineage()
+                                : mSigningCertificateLineage;
+                builder.setLineageForMinSdkVersion(targetedLineage, targetedMinSdkVersion);
+                builder.setSignerTargetsDevRelease(targetsDevRelease);
+                mTargetedSignerConfigs.add(builder.build());
+            }
+            mSignerConfigs = originalSignerConfig;
+        }
+
+        /**
+         * Merges and returns the global {@link SigningCertificateLineage} provided through {@link
+         * Builder#setSigningCertificateLineage(SigningCertificateLineage)} with any explicit
+         * lineages set for each of the provided {@code signerConfigs}.
+         */
+        private SigningCertificateLineage mergeSignerLineages(List<SignerConfig> signerConfigs)
                 throws InvalidKeyException {
-            SigningCertificateLineage mergedLineage = null;
-            int prevSdkVersion = 0;
-            for (SignerConfig signerConfig : mTargetedSignerConfigs) {
-                int signerMinSdkVersion = signerConfig.getMinSdkVersion();
-                if (signerMinSdkVersion < AndroidSdkVersion.P) {
-                    throw new IllegalStateException(
-                            "Targeted signing config is not supported prior to SDK version "
-                                    + AndroidSdkVersion.P + "; received value "
-                                    + signerMinSdkVersion);
-                }
-                SigningCertificateLineage signerLineage =
-                        signerConfig.getSigningCertificateLineage();
-                // It is possible for a lineage to be null if the user is using one of the
-                // signers from the lineage as the only signer to target an SDK version; create
-                // a single element lineage to verify the signer is part of the merged lineage.
-                if (signerLineage == null) {
-                    try {
-                        signerLineage =
-                                new SigningCertificateLineage.Builder(
-                                                new SigningCertificateLineage.SignerConfig.Builder(
-                                                                signerConfig.mKeyConfig,
-                                                                signerConfig.mCertificates.get(0))
-                                                        .build())
-                                        .build();
-                    } catch (CertificateEncodingException
-                            | NoSuchAlgorithmException
-                            | SignatureException e) {
-                        throw new IllegalStateException(
-                                "Unable to create a SignerConfig for signer from certificate "
-                                        + signerConfig.mCertificates.get(0).getSubjectDN());
+            SigningCertificateLineage mergedLineage = mSigningCertificateLineage;
+
+            for (SignerConfig config : signerConfigs) {
+                SigningCertificateLineage lineage = config.getSigningCertificateLineage();
+                if (lineage != null) {
+                    if (mergedLineage == null) {
+                        mergedLineage = lineage;
+                    } else {
+                        try {
+                            mergedLineage = mergedLineage.mergeLineageWith(lineage);
+                        } catch (IllegalArgumentException e) {
+                            throw new IllegalStateException(
+                                    "Signer "
+                                            + config.getName()
+                                            + " contains a lineage that "
+                                            + "conflicts with other provided lineages.",
+                                    e);
+                        }
                     }
                 }
-                // The V3.0 signature scheme does not support verified targeted SDK signing
-                // configs; if a signer is targeting any SDK version < T, then it will
-                // target P with the V3.0 signature scheme.
-                if (signerMinSdkVersion < AndroidSdkVersion.T) {
-                    signerMinSdkVersion = AndroidSdkVersion.P;
-                }
-                // Ensure there are no SignerConfigs targeting the same SDK version that is not
-                // the minimum version for rotation.
-                if (signerMinSdkVersion == prevSdkVersion
-                        && prevSdkVersion != mRotationMinSdkVersion) {
-                    throw new IllegalStateException(
-                            "Multiple SignerConfigs were found targeting SDK version "
-                                    + signerMinSdkVersion);
-                }
-                // If multiple lineages have been provided, then verify each subsequent lineage
-                // is a valid descendant or ancestor of the previously merged lineages.
-                if (mergedLineage == null) {
-                    mergedLineage = signerLineage;
-                } else {
-                    try {
-                        mergedLineage = mergedLineage.mergeLineageWith(signerLineage);
-                    } catch (IllegalArgumentException e) {
-                        throw new IllegalStateException(
-                                "The provided lineage targeting SDK " + signerMinSdkVersion
-                                        + " is not in the signing history of the other targeted "
-                                        + "signing configs", e);
-                    }
-                }
-                prevSdkVersion = signerMinSdkVersion;
             }
             return mergedLineage;
         }
