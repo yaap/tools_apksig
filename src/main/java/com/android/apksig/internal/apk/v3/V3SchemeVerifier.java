@@ -414,9 +414,13 @@ public class V3SchemeVerifier {
         // Verify signatures over signed-data block using the public key
         List<ApkSigningBlockUtils.SupportedSignature> signaturesToVerify = null;
         try {
+            int effectiveMinSdkVersion = result.minSdkVersion;
+            if (signedDataTargetsDevRelease(signedData)) {
+                effectiveMinSdkVersion++;
+            }
             signaturesToVerify =
                     ApkSigningBlockUtils.getSignaturesToVerify(
-                            supportedSignatures, result.minSdkVersion, result.maxSdkVersion);
+                            supportedSignatures, effectiveMinSdkVersion, result.maxSdkVersion);
         } catch (ApkSigningBlockUtils.NoSupportedSignaturesException e) {
             result.addError(Issue.V3_SIG_NO_SUPPORTED_SIGNATURES);
             return;
@@ -708,6 +712,44 @@ public class V3SchemeVerifier {
                     mOptionalHybridMaxSdkVersion.getAsInt(),
                     schemeVersion);
         }
+    }
+
+    /**
+     * Returns whether there's an additional attribute in the signed data that targets a development
+     * release.
+     *
+     * <p>This method does not verify that the additional attributes block is well formed but is
+     * a best effort to determine if the current signer block is targeting a development release.
+     * This is used when obtaining the signatures to verify since new signature algorithms can
+     * target a development release, and APKs created during this time will have a minimum SDK
+     * version of the previously released platform along with the dev release attribute. In this
+     * case, after the SDK is finalized, querying for signatures without this attribute will fail
+     * because it will appear the signer is targeting a previous release on which the new signature
+     * algorithm is not supported.
+     */
+    private static boolean signedDataTargetsDevRelease(ByteBuffer signedData) {
+        try {
+            ByteBuffer signedDataPeek = signedData.duplicate();
+            signedDataPeek.order(ByteOrder.LITTLE_ENDIAN);
+
+            ApkSigningBlockUtils.getLengthPrefixedSlice(signedDataPeek); // skip digests
+            ApkSigningBlockUtils.getLengthPrefixedSlice(signedDataPeek); // skip certificates
+            signedDataPeek.getInt(); // skip minSdkVersion
+            signedDataPeek.getInt(); // skip maxSdkVersion
+
+            ByteBuffer attributes = ApkSigningBlockUtils.getLengthPrefixedSlice(signedDataPeek);
+            while (attributes.hasRemaining()) {
+                ByteBuffer attr = ApkSigningBlockUtils.getLengthPrefixedSlice(attributes);
+                int id = attr.getInt();
+                if (id == V3SchemeConstants.SIGNER_TARGETS_DEV_RELEASE_ATTR_ID) {
+                    return true;
+                }
+            }
+        } catch (Exception ignored) {
+            // If the signed data block is malformed, it can be ignored here; the formal parsing
+            // logic after the signature verification will catch it and log the appropriate error.
+        }
+        return false;
     }
 
     /**

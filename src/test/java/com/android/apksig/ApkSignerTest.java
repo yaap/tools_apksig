@@ -17,7 +17,7 @@
 package com.android.apksig;
 
 import static com.android.apksig.ApkSigTestUtils.assertResultContainsSigners;
-import static com.android.apksig.ApkSigTestUtils.assertResultContainsV32Signers;
+import static com.android.apksig.ApkSigTestUtils.assertResultContainsV32SignersTargetingSdkVersion;
 import static com.android.apksig.ApkSigTestUtils.assertVerified;
 import static com.android.apksig.ApkSigTestUtils.getAllSubjectNamesFrom;
 import static com.android.apksig.ApkVerifier.Result.V3SchemeSignerInfo;
@@ -1249,7 +1249,8 @@ public class ApkSignerTest {
                         sign(
                                 "original-minSdk36.apk",
                                 new ApkSigner.Builder(mlDsaSignerConfig)
-                                        .setV4SigningEnabled(false));
+                                        .setV4SigningEnabled(false)
+                                        .setMinSdkVersion(AndroidSdkVersion.C));
                 assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.C));
 
                 // Verify that signing works when only V2 is specified; since a minSdkVersion of
@@ -1262,7 +1263,8 @@ public class ApkSignerTest {
                                         .setV1SigningEnabled(false)
                                         .setV2SigningEnabled(true)
                                         .setV3SigningEnabled(false)
-                                        .setV4SigningEnabled(false));
+                                        .setV4SigningEnabled(false)
+                                        .setMinSdkVersion(AndroidSdkVersion.C));
                 assertVerified(verifyForMinSdkVersion(out, AndroidSdkVersion.C));
             }
         } finally {
@@ -3689,6 +3691,11 @@ public class ApkSignerTest {
         // hybrid block that protects the APK with both the established classical signature
         // algorithms along with the newly standardized ML-DSA PQC algorithm. This test verifies
         // an APK can be signed with the new hybrid signing config.
+        // This test will also verify that the V3.2 signers target the SDK version of the platform
+        // release that introduced support for the V3.2 signature scheme; during development, this
+        // was set to the previously released platform's SDK version with the dev attribute to allow
+        // the block to target the development platform release, but after the SDK finalization, it
+        // can now target the new SDK version of the platform.
         // TODO(b/462818872): Switch to the Bouncy Castle provider when the tree is updated with
         // a new version that supports ML-DSA.
         Provider conscryptProvider = new org.conscrypt.OpenSSLProvider();
@@ -3722,7 +3729,10 @@ public class ApkSignerTest {
             ApkVerifier.Result result = verify(signedApk, null);
 
             assertVerified(result);
-            assertResultContainsV32Signers(result, SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
+            assertResultContainsV32SignersTargetingSdkVersion(
+                    result,
+                    V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT,
+                    SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
                     ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
             assertResultContainsSigners(result, FIRST_RSA_2048_SIGNER_RESOURCE_NAME);
         } finally {
@@ -3794,8 +3804,9 @@ public class ApkSignerTest {
             ApkVerifier.Result result = verify(signedApk, null);
 
             assertVerified(result);
-            assertResultContainsV32Signers(
+            assertResultContainsV32SignersTargetingSdkVersion(
                     result,
+                    V3SchemeConstants.MIN_SDK_WITH_V32_SUPPORT,
                     SECOND_RSA_2048_SIGNER_RESOURCE_NAME,
                     ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME);
             assertResultContainsSigners(

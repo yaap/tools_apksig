@@ -79,6 +79,8 @@ public abstract class AndroidSdkVersion {
     public static final int B = 36;
 
     /** Android C. */
-    // TODO(b/462801233): Ensure this matches the SDK version when it is finalized.
     public static final int C = 37;
+
+    /** Android D. */
+    public static final int D = 38;
 }

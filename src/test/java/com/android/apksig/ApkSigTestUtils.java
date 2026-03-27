@@ -18,6 +18,7 @@ package com.android.apksig;
 
 import static com.android.apksig.internal.util.Resources.getDefaultSignerConfigFromResources;
 
+import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
@@ -135,6 +136,17 @@ public class ApkSigTestUtils {
      */
     public static void assertResultContainsV32Signers(ApkVerifier.Result result, String... signers)
             throws Exception {
+        assertResultContainsV32SignersTargetingSdkVersion(result, 0, signers);
+    }
+
+    /**
+     * Asserts the provided verification {@code result} contains the expected V3.2 {@code signers}
+     * targeting the provided {@code sdkVersion}.
+     *
+     * <p>If the {@code sdkVersion} is 0, then the SDK targeting check will be skipped.
+     */
+    public static void assertResultContainsV32SignersTargetingSdkVersion(
+            ApkVerifier.Result result, int sdkVersion, String... signers) throws Exception {
         assertTrue(result.isVerified());
         assertTrue(result.isVerifiedUsingV32Scheme());
         List<X509Certificate> expectedSigners = new ArrayList<>();
@@ -152,6 +164,16 @@ public class ApkSigTestUtils {
                         + ", actual V3.2 signers: "
                         + getAllSubjectNamesFrom(v32Signers),
                 v32Signers.containsAll(expectedSigners));
+        if (sdkVersion > 0) {
+            assertEquals(
+                    "Expected V3.2 classical signer to target SDK version " + sdkVersion,
+                    sdkVersion,
+                    v32Signer.getClassicalSignerInfo().getMinSdkVersion());
+            assertEquals(
+                    "Expected V3.2 PQC signer to target SDK version " + sdkVersion,
+                    sdkVersion,
+                    v32Signer.getPqcSignerInfo().getMinSdkVersion());
+        }
     }
 
     /**
