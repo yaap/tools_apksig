@@ -56,6 +56,12 @@ import javax.crypto.spec.PBEKeySpec;
 
 /** A utility class to load private key and certificates from a keystore or key and cert files. */
 public class SignerParams {
+    public enum SignerRole {
+        SINGLE_SIGNER,
+        HYBRID_CLASSICAL,
+        HYBRID_PQC,
+    }
+
     private String name;
 
     private String keystoreFile;
@@ -82,6 +88,7 @@ public class SignerParams {
 
     private int minSdkVersion;
     private SigningCertificateLineage signingCertificateLineage;
+    private SignerRole signerRole = SignerRole.SINGLE_SIGNER;
 
     public String getName() {
         return name;
@@ -200,6 +207,14 @@ public class SignerParams {
 
     public void setSigningCertificateLineage(SigningCertificateLineage lineage) {
         this.signingCertificateLineage = lineage;
+    }
+
+    public SignerRole getSignerRole() {
+        return signerRole;
+    }
+
+    public void setSignerRole(SignerRole signerRole) {
+        this.signerRole = signerRole;
     }
 
     boolean isEmpty() {
@@ -569,7 +584,11 @@ public class SignerParams {
             return KeyFactory.getInstance("DSA").generatePrivate(spec);
         } catch (InvalidKeySpecException expected) {
         }
-        throw new InvalidKeySpecException("Not an RSA, EC, or DSA private key");
+        try {
+            return KeyFactory.getInstance("ML-DSA").generatePrivate(spec);
+        } catch (InvalidKeySpecException expected) {
+        }
+        throw new InvalidKeySpecException("Not an RSA, EC, DSA, or ML-DSA private key");
     }
 
     private static byte[] readFully(File file) throws IOException {

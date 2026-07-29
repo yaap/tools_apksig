@@ -24,8 +24,8 @@ import static com.android.apksig.internal.apk.ApkSigningBlockUtils.encodePublicK
 
 import com.android.apksig.SigningCertificateLineage;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils;
-import com.android.apksig.internal.apk.ApkSigningBlockUtils.SigningSchemeBlockAndDigests;
 import com.android.apksig.internal.apk.ApkSigningBlockUtils.SignerConfig;
+import com.android.apksig.internal.apk.ApkSigningBlockUtils.SigningSchemeBlockAndDigests;
 import com.android.apksig.internal.apk.ContentDigestAlgorithm;
 import com.android.apksig.internal.apk.SignatureAlgorithm;
 import com.android.apksig.internal.util.Pair;
@@ -71,15 +71,20 @@ public class V3SchemeSigner {
     private final List<SignerConfig> mSignerConfigs;
     private final int mBlockId;
     private final OptionalInt mOptionalV31MinSdkVersion;
+    private final OptionalInt mOptionalV32MinSdkVersion;
+    private final OptionalInt mOptionalV32MaxSdkVersion;
     private final boolean mRotationTargetsDevRelease;
 
-    private V3SchemeSigner(DataSource beforeCentralDir,
+    private V3SchemeSigner(
+            DataSource beforeCentralDir,
             DataSource centralDir,
             DataSource eocd,
             List<SignerConfig> signerConfigs,
             RunnablesExecutor executor,
             int blockId,
             OptionalInt optionalV31MinSdkVersion,
+            OptionalInt optionalV32MinSdkVersion,
+            OptionalInt optionalV32MaxSdkVersion,
             boolean rotationTargetsDevRelease) {
         mBeforeCentralDir = beforeCentralDir;
         mCentralDir = centralDir;
@@ -88,6 +93,8 @@ public class V3SchemeSigner {
         mExecutor = executor;
         mBlockId = blockId;
         mOptionalV31MinSdkVersion = optionalV31MinSdkVersion;
+        mOptionalV32MinSdkVersion = optionalV32MinSdkVersion;
+        mOptionalV32MaxSdkVersion = optionalV32MaxSdkVersion;
         mRotationTargetsDevRelease = rotationTargetsDevRelease;
     }
 
@@ -151,6 +158,10 @@ public class V3SchemeSigner {
                 // digest being the weak link. SHA-512 is the next strongest supported digest.
                 return Collections.singletonList(SignatureAlgorithm.ECDSA_WITH_SHA512);
             }
+        } else if ("ML-DSA".equalsIgnoreCase(keyAlgorithm)) {
+            List<SignatureAlgorithm> algorithms = new ArrayList<>();
+            algorithms.add(SignatureAlgorithm.ML_DSA);
+            return algorithms;
         } else {
             throw new InvalidKeyException("Unsupported key algorithm: " + keyAlgorithm);
         }
@@ -186,22 +197,22 @@ public class V3SchemeSigner {
         return result.array();
     }
 
-    private static byte[] generateV3RotationMinSdkVersionStrippingProtectionAttribute(
-            int rotationMinSdkVersion) {
+    private static byte[] generateV3SdkVersionStrippingProtectionAttribute(
+            int attributeId, int sdkVersion) {
         // FORMAT (little endian):
         // * length-prefixed bytes: attribute pair
         //   * uint32: ID
-        //   * bytes: value - int32 representing minimum SDK version for rotation
+        //   * bytes: value - int32 representing the SDK version for stripping protection
         int payloadSize = 4 + 4 + 4;
         ByteBuffer result = ByteBuffer.allocate(payloadSize);
         result.order(ByteOrder.LITTLE_ENDIAN);
         result.putInt(payloadSize - 4);
-        result.putInt(V3SchemeConstants.ROTATION_MIN_SDK_VERSION_ATTR_ID);
-        result.putInt(rotationMinSdkVersion);
+        result.putInt(attributeId);
+        result.putInt(sdkVersion);
         return result.array();
     }
 
-    private static byte[] generateV31RotationTargetsDevReleaseAttribute() {
+    private static byte[] generateSignerTargetsDevReleaseAttribute() {
         // FORMAT (little endian):
         // * length-prefixed bytes: attribute pair
         //   * uint32: ID
@@ -210,7 +221,7 @@ public class V3SchemeSigner {
         ByteBuffer result = ByteBuffer.allocate(payloadSize);
         result.order(ByteOrder.LITTLE_ENDIAN);
         result.putInt(payloadSize - 4);
-        result.putInt(V3SchemeConstants.ROTATION_ON_DEV_RELEASE_ATTR_ID);
+        result.putInt(V3SchemeConstants.SIGNER_TARGETS_DEV_RELEASE_ATTR_ID);
         return result.array();
     }
 
@@ -383,13 +394,32 @@ public class V3SchemeSigner {
             attributes.add(generateV3SignerAttribute(signerConfig.signingCertificateLineage));
         }
         if ((mRotationTargetsDevRelease || signerConfig.signerTargetsDevRelease)
-                && mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID) {
-            attributes.add(generateV31RotationTargetsDevReleaseAttribute());
+                && (mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID
+                        || mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID)) {
+            attributes.add(generateSignerTargetsDevReleaseAttribute());
+        }
+        if (mOptionalV32MinSdkVersion.isPresent()
+                && (mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID
+                        || mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID)) {
+            attributes.add(
+                    generateV3SdkVersionStrippingProtectionAttribute(
+                            V3SchemeConstants.HYBRID_MIN_SDK_VERSION_ATTR_ID,
+                            mOptionalV32MinSdkVersion.getAsInt()));
+        }
+        if (mOptionalV32MaxSdkVersion.isPresent()
+                && (mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID
+                        || mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID)) {
+            attributes.add(
+                    generateV3SdkVersionStrippingProtectionAttribute(
+                            V3SchemeConstants.HYBRID_MAX_SDK_VERSION_ATTR_ID,
+                            mOptionalV32MaxSdkVersion.getAsInt()));
         }
         if (mOptionalV31MinSdkVersion.isPresent()
                 && mBlockId == V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID) {
-            attributes.add(generateV3RotationMinSdkVersionStrippingProtectionAttribute(
-                    mOptionalV31MinSdkVersion.getAsInt()));
+            attributes.add(
+                    generateV3SdkVersionStrippingProtectionAttribute(
+                            V3SchemeConstants.ROTATION_MIN_SDK_VERSION_ATTR_ID,
+                            mOptionalV31MinSdkVersion.getAsInt()));
         }
         int attributesSize = attributes.stream().mapToInt(attribute -> attribute.length).sum();
         byte[] attributesBuffer = new byte[attributesSize];
@@ -432,6 +462,8 @@ public class V3SchemeSigner {
         private RunnablesExecutor mExecutor = RunnablesExecutor.MULTI_THREADED;
         private int mBlockId = V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID;
         private OptionalInt mOptionalV31MinSdkVersion = OptionalInt.empty();
+        private OptionalInt mOptionalV32MinSdkVersion = OptionalInt.empty();
+        private OptionalInt mOptionalV32MaxSdkVersion = OptionalInt.empty();
         private boolean mRotationTargetsDevRelease = false;
 
         /**
@@ -479,8 +511,8 @@ public class V3SchemeSigner {
         }
 
         /**
-         * Sets the {@code minSdkVersion} to be written as an additional attribute in each
-         * signer's block.
+         * Sets the {@code minSdkVersion} for the v3.1 block to be written as an additional
+         * attribute in the V3.0 signature block.
          *
          * <p>This value provides the stripping protection to ensure a v3.1 signing block is not
          * modified or removed from the APK's signature block.
@@ -490,6 +522,37 @@ public class V3SchemeSigner {
                 minSdkVersion = V3SchemeConstants.PROD_RELEASE;
             }
             mOptionalV31MinSdkVersion = OptionalInt.of(minSdkVersion);
+            return this;
+        }
+
+        /**
+         * Sets the {@code minSdkVersion} for the v3.2 block to be written as an additional
+         * attribute in the v3.0 / v3.1 signature blocks.
+         *
+         * <p>This value provides the stripping protection to ensure a v3.2 signing block is not
+         * modified or removed from the APK's signature block.
+         */
+        public Builder setMinSdkVersionForV32(int minSdkVersion) {
+            if (minSdkVersion == V3SchemeConstants.DEV_RELEASE) {
+                minSdkVersion = V3SchemeConstants.PROD_RELEASE;
+            }
+            mOptionalV32MinSdkVersion = OptionalInt.of(minSdkVersion);
+            return this;
+        }
+
+        /**
+         * Sets the {@code maxSdkVersion} for the v3.2 block to be written as an additional
+         * attribute in the v3.0 / v3.1 signature blocks.
+         *
+         * <p>This value provides the stripping protection to ensure a v3.2 signing block can
+         * transition back to a single signer. If this is not specified, then the platform will
+         * assume a value of {@link Integer#MAX_VALUE}, but if an app is transitioning back to a
+         * single signer config on a later SDK version, this version should be provided so that the
+         * platform can determine the maximum SDK version for a hybrid signer and use the single
+         * signer config if the hybrid block does not apply to the device SDK version.
+         */
+        public Builder setMaxSdkVersionForV32(int maxSdkVersion) {
+            mOptionalV32MaxSdkVersion = OptionalInt.of(maxSdkVersion);
             return this;
         }
 
@@ -518,13 +581,16 @@ public class V3SchemeSigner {
          * {@code Builder}.
          */
         public V3SchemeSigner build() {
-            return new V3SchemeSigner(mBeforeCentralDir,
+            return new V3SchemeSigner(
+                    mBeforeCentralDir,
                     mCentralDir,
                     mEocd,
                     mSignerConfigs,
                     mExecutor,
                     mBlockId,
                     mOptionalV31MinSdkVersion,
+                    mOptionalV32MinSdkVersion,
+                    mOptionalV32MaxSdkVersion,
                     mRotationTargetsDevRelease);
         }
     }

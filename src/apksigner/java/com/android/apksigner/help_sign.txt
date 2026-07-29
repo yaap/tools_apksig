@@ -132,6 +132,23 @@ certificate.
                       preserve existing key / value blocks that exist within the
                       APK signing block.
 
+--hybrid-min-sdk-version <SDK> Requires an int value indicating the minimum SDK
+                      version on which the V3.2 hybrid signature should be used
+                      to verify the APK's signature. If this option is not
+                      specified, a hybrid signature will default to the first
+                      release with support for the hybrid scheme. This option
+                      is ignored if no hybrid signing config is specified.
+
+--hybrid-max-sdk-version <SDK> Requires an int value indicating the maximum SDK
+                      version on which the V3.2 hybrid signature should be used
+                      to verify the APK's signature. This is intended for cases
+                      where the app being signed is transitioning to a single
+                      signer config but the hybrid config is still required on
+                      previous SDK versions. If this option is not specified, a
+                      hybrid signature will default to supporting all platform
+                      releases after the hybrid minimum SDK version. This option
+                      is ignored if no hybrid signing config is specified.
+
 -h, --help            Show help about this command and exit
 
 
@@ -160,6 +177,12 @@ options of different signers, use --next-signer.
 
 --signer-lineage      The lineage to be used for the current SDK targeted
                       signing config.
+
+--hybrid-signer-role [classical|pqc] Specifies the role of the current hybrid
+                      signer in the context of the V3.2 signature scheme. This
+                      scheme requires that both a classical and PQC signer be
+                      specified to support the transition from a classical
+                      signing key to a quantum safe signing key.
 
         PER-SIGNER SIGNING KEY & CERTIFICATE OPTIONS
 There are two ways to provide the signer's private key and certificate: (1) Java

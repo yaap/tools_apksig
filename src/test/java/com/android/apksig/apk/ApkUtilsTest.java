@@ -21,18 +21,18 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.security.MessageDigest;
+import com.android.apksig.ApkSigner;
+import com.android.apksig.internal.util.HexEncoding;
+import com.android.apksig.internal.util.Resources;
+import com.android.apksig.util.DataSources;
 
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.JUnit4;
 
-import com.android.apksig.ApkSigner;
-import com.android.apksig.internal.util.HexEncoding;
-import com.android.apksig.internal.util.Resources;
-import com.android.apksig.util.DataSources;
+import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.security.MessageDigest;
 
 @RunWith(JUnit4.class)
 public class ApkUtilsTest {
@@ -47,6 +47,10 @@ public class ApkUtilsTest {
         assertEquals(25, ApkUtils.getMinSdkVersionForCodename("OMG"));
         // Speculative: Q should be 27 or higher (not yet known at the time of writing)
         assertEquals(27, ApkUtils.getMinSdkVersionForCodename("QQQ"));
+        assertEquals(34, ApkUtils.getMinSdkVersionForCodename("Baklava"));
+        assertEquals(35, ApkUtils.getMinSdkVersionForCodename("CinnamonBun"));
+        assertEquals(9999, ApkUtils.getMinSdkVersionForCodename("CANARY"));
+        assertEquals(9999, ApkUtils.getMinSdkVersionForCodename("DEV"));
     }
 
     @Test(expected = CodenameMinSdkVersionException.class)

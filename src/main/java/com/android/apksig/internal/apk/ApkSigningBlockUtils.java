@@ -16,6 +16,8 @@
 
 package com.android.apksig.internal.apk;
 
+import static com.android.apksig.Constants.OID_ML_DSA_65;
+import static com.android.apksig.Constants.OID_ML_DSA_87;
 import static com.android.apksig.Constants.OID_RSA_ENCRYPTION;
 import static com.android.apksig.internal.apk.ContentDigestAlgorithm.CHUNKED_SHA256;
 import static com.android.apksig.internal.apk.ContentDigestAlgorithm.CHUNKED_SHA512;
@@ -107,6 +109,7 @@ public class ApkSigningBlockUtils {
     public static final int VERSION_APK_SIGNATURE_SCHEME_V2 = 2;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V3 = 3;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V31 = 31;
+    public static final int VERSION_APK_SIGNATURE_SCHEME_V32 = 32;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V4 = 4;
 
     /**
@@ -228,6 +231,26 @@ public class ApkSigningBlockUtils {
                 }
                 signerInfo.verifiedContentDigests.put(contentDigestAlgorithm, actualDigest);
             }
+        }
+    }
+
+    /**
+     * Returns whether the first signing certificate in {@code certificates} that will be used to
+     * sign the APK is a PQC signer.
+     */
+    public static boolean isPqcSigner(List<X509Certificate> certificates) {
+        if (certificates == null || certificates.isEmpty()) {
+            throw new IllegalArgumentException("At least one signing certificate must be provided");
+        }
+        PublicKey publicKey = certificates.get(0).getPublicKey();
+        String keyAlgorithm = publicKey.getAlgorithm();
+        switch (keyAlgorithm) {
+            case "ML-DSA":
+            case OID_ML_DSA_65:
+            case OID_ML_DSA_87:
+                return true;
+            default:
+                return false;
         }
     }
 

@@ -33,6 +33,7 @@ public class Constants {
     public static final int VERSION_APK_SIGNATURE_SCHEME_V2 = 2;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V3 = 3;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V31 = 31;
+    public static final int VERSION_APK_SIGNATURE_SCHEME_V32 = 32;
     public static final int VERSION_APK_SIGNATURE_SCHEME_V4 = 4;
 
     /**
@@ -54,6 +55,8 @@ public class Constants {
             V3SchemeConstants.APK_SIGNATURE_SCHEME_V3_BLOCK_ID;
     public static final int APK_SIGNATURE_SCHEME_V31_BLOCK_ID =
             V3SchemeConstants.APK_SIGNATURE_SCHEME_V31_BLOCK_ID;
+    public static final int APK_SIGNATURE_SCHEME_V32_BLOCK_ID =
+            V3SchemeConstants.APK_SIGNATURE_SCHEME_V32_BLOCK_ID;
     public static final int PROOF_OF_ROTATION_ATTR_ID = V3SchemeConstants.PROOF_OF_ROTATION_ATTR_ID;
 
     public static final int V1_SOURCE_STAMP_BLOCK_ID =
@@ -62,4 +65,6 @@ public class Constants {
             SourceStampConstants.V2_SOURCE_STAMP_BLOCK_ID;
 
     public static final String OID_RSA_ENCRYPTION = "1.2.840.113549.1.1.1";
+    public static final String OID_ML_DSA_65 = "2.16.840.1.101.3.4.3.18";
+    public static final String OID_ML_DSA_87 = "2.16.840.1.101.3.4.3.19";
 }

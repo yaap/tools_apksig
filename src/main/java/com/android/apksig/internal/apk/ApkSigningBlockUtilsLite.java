@@ -19,6 +19,7 @@ package com.android.apksig.internal.apk;
 import com.android.apksig.apk.ApkFormatException;
 import com.android.apksig.apk.ApkSigningBlockNotFoundException;
 import com.android.apksig.apk.ApkUtilsLite;
+import com.android.apksig.internal.apk.v3.V3SchemeConstants;
 import com.android.apksig.internal.util.Pair;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.zip.ZipSections;
@@ -182,6 +183,13 @@ public class ApkSigningBlockUtilsLite {
             SignatureAlgorithm sigAlgorithm = sig.algorithm;
             int sigMinSdkVersion = onlyRequireJcaSupport ? sigAlgorithm.getJcaSigAlgMinSdkVersion()
                     : sigAlgorithm.getMinSdkVersion();
+            // If the signature algorithm is targeting a development release, then set it to the
+            // last prod release version since this is the value that will be written to the signing
+            // block along with the dev release attribute to support development of new signature
+            // algorithms.
+            if (sigMinSdkVersion == V3SchemeConstants.DEV_RELEASE) {
+                sigMinSdkVersion = V3SchemeConstants.PROD_RELEASE;
+            }
             if (sigMinSdkVersion > maxSdkVersion) {
                 continue;
             }

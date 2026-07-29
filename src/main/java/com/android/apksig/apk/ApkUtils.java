@@ -57,7 +57,7 @@ public abstract class ApkUtils {
      */
     public static ZipSections findZipSections(DataSource apk)
             throws IOException, ZipFormatException {
-        com.android.apksig.zip.ZipSections zipSections = ApkUtilsLite.findZipSections(apk);
+        com.android.apksig.zip.ZipSections zipSections = ZipUtils.findZipSections(apk);
         return new ZipSections(
                 zipSections.getZipCentralDirectoryOffset(),
                 zipSections.getZipCentralDirectorySizeBytes(),
@@ -353,11 +353,17 @@ public abstract class ApkUtils {
      * @throws CodenameMinSdkVersionException if the {@code codename} is not supported
      */
     static int getMinSdkVersionForCodename(String codename) throws CodenameMinSdkVersionException {
-        if ("Baklava".equals(codename)) {
-            return 34; // VIC (35) was the version before Baklava, return VIC version minus one
-        }
-        if ("CANARY".equals(codename)) {
-            return 9999; // 10_000 minus one
+        switch (codename) {
+            case "Baklava":
+                // VIC (35) was the version before Baklava, return VIC version minus one
+                return 34;
+            case "CinnamonBun":
+                // Baklava (36) was the version before CinnamonBun, return Baklava version minus one
+                return 35;
+            case "CANARY":
+            case "DEV":
+                // 10_000 minus one
+                return 9999;
         }
 
         char firstChar = codename.isEmpty() ? ' ' : codename.charAt(0);

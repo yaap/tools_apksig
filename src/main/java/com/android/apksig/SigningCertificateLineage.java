@@ -538,6 +538,14 @@ public class SigningCertificateLineage {
         }
     }
 
+    /**
+     * Returns the minimum SDK version that will support all of the signature algorithms contained
+     * within the lineage nodes.
+     */
+    public int getMinimumSupportedSdkVersion() {
+        return calculateMinSdkVersion(mSigningLineage);
+    }
+
     private static int calculateMinSdkVersion(List<SigningCertificateNode> nodes) {
         if (nodes == null) {
             throw new IllegalArgumentException("Can't calculate minimum SDK version of null nodes");
@@ -588,7 +596,6 @@ public class SigningCertificateLineage {
                 DefaultApkSignerEngine.SignerConfig config = signerConfigs.get(j);
                 if (mSigningLineage.get(i).signingCert.equals(config.getCertificates().get(0))) {
                     sortedSignerConfigs.add(config);
-                    break;
                 }
             }
         }
@@ -726,6 +733,32 @@ public class SigningCertificateLineage {
         }
 
         return mSigningLineage.get(mSigningLineage.size() - 1).signingCert.equals(cert);
+    }
+
+    /**
+     * Returns whether this lineage contains the same signing history as the provided {@code
+     * otherLineage}.
+     *
+     * <p>A lineage contains the signing history through the current signer; this method will verify
+     * that the certificates in each lineage are identical until the current signer.
+     */
+    public boolean containsSameHistory(SigningCertificateLineage otherLineage)
+            throws CertificateEncodingException {
+        List<X509Certificate> thisCerts = getCertificatesInLineage();
+        List<X509Certificate> otherCerts = otherLineage.getCertificatesInLineage();
+        if (thisCerts.size() != otherCerts.size()) {
+            return false;
+        }
+        for (int i = 0; i < thisCerts.size() - 1; i++) {
+            X509Certificate thisCert = thisCerts.get(i);
+            X509Certificate otherCert = otherCerts.get(i);
+            byte[] thisCertBytes = thisCert.getEncoded();
+            byte[] otherCertBytes = otherCert.getEncoded();
+            if (!Arrays.equals(thisCertBytes, otherCertBytes)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static int calculateDefaultFlags() {

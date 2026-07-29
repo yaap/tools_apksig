@@ -2,15 +2,28 @@ package com.android.apksig.internal.apk;
 
 import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 
+import com.android.apksig.AllTests;
+import com.android.apksig.internal.util.Resources;
 import com.android.apksig.util.DataSource;
 import com.android.apksig.util.DataSources;
 import com.android.apksig.util.RunnablesExecutor;
 import com.android.apksig.util.RunnablesProvider;
+
+import org.junit.Before;
+import org.junit.Rule;
+import org.junit.Test;
+import org.junit.rules.TemporaryFolder;
+import org.junit.runner.RunWith;
+import org.junit.runners.JUnit4;
+
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.EnumSet;
@@ -20,12 +33,6 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ForkJoinPool;
 import java.util.concurrent.Future;
-import org.junit.Before;
-import org.junit.Rule;
-import org.junit.Test;
-import org.junit.rules.TemporaryFolder;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
 
 @RunWith(JUnit4.class)
 public class ApkSigningBlockUtilsTest {
@@ -118,6 +125,25 @@ public class ApkSigningBlockUtilsTest {
                 algos, dataSource, outputContentDigestsMultithreaded);
 
         assertEqualDigests(outputContentDigestsMultithreaded, outputContentDigests);
+    }
+
+    @Test
+    public void isPqcSigner_pqcSignerCertificate_returnsTrue() throws Exception {
+        X509Certificate pqcCertificate =
+                Resources.toCertificate(
+                        AllTests.class, Resources.ML_DSA_65_CONSCRYPT_SIGNER_RESOURCE_NAME + ".x509.pem");
+
+        assertTrue(ApkSigningBlockUtils.isPqcSigner(List.of(pqcCertificate)));
+    }
+
+    @Test
+    public void isPqcSigner_notPqcSignerCertificate_returnsFalse() throws Exception {
+        X509Certificate pqcCertificate =
+                Resources.toCertificate(
+                        AllTests.class,
+                        Resources.FIRST_RSA_2048_SIGNER_RESOURCE_NAME + ".x509.pem");
+
+        assertFalse(ApkSigningBlockUtils.isPqcSigner(List.of(pqcCertificate)));
     }
 
     private void assertEqualDigests(
